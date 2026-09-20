@@ -1,0 +1,499 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #1a1a2e;
+  color: #eee;
+  overflow: hidden;
+}
+
+#root {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+}
+
+.app-layout {
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+
+/* Map container */
+.map-container {
+  flex: 1;
+  position: relative;
+}
+
+.maplibregl-map {
+  width: 100%;
+  height: 100%;
+}
+
+/* Sidebar */
+.sidebar {
+  width: 570px;
+  background: #16213e;
+  border-left: 1px solid #0f3460;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sidebar-header {
+  padding: 16px;
+  background: #0f3460;
+  border-bottom: 1px solid #1a1a4e;
+}
+
+.sidebar-header h1 {
+  font-size: 18px;
+  color: #e94560;
+  margin-bottom: 4px;
+}
+
+.sidebar-header p {
+  font-size: 12px;
+  color: #888;
+}
+
+/* Controls */
+.controls {
+  padding: 12px 16px;
+  border-bottom: 1px solid #0f3460;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.control-group label {
+  font-size: 11px;
+  color: #888;
+  text-transform: uppercase;
+}
+
+.control-group select,
+.control-group input {
+  background: #1a1a2e;
+  border: 1px solid #0f3460;
+  color: #eee;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.2s;
+}
+
+.btn-primary {
+  background: #e94560;
+  color: white;
+}
+
+.btn-primary:hover {
+  background: #c73e54;
+}
+
+.btn-secondary {
+  background: #0f3460;
+  color: #eee;
+}
+
+.btn-secondary:hover {
+  background: #1a4a8a;
+}
+
+/* Stats panel */
+.stats-panel {
+  padding: 12px 16px;
+  border-bottom: 1px solid #0f3460;
+  display: flex;
+  gap: 16px;
+}
+
+.stat-item {
+  text-align: center;
+}
+
+.stat-value {
+  font-size: 24px;
+  font-weight: bold;
+  color: #e94560;
+}
+
+.stat-label {
+  font-size: 11px;
+  color: #888;
+  text-transform: uppercase;
+}
+
+/* Chat panel */
+.chat-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px;
+}
+
+.chat-message {
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 14px;
+  line-height: 1.5;
+  max-width: 90%;
+}
+
+.chat-message.user {
+  background: #0f3460;
+  margin-left: auto;
+  border-bottom-right-radius: 2px;
+}
+
+.chat-message.assistant {
+  background: #1a1a2e;
+  border: 1px solid #0f3460;
+  border-bottom-left-radius: 2px;
+}
+
+.chat-message.system {
+  background: transparent;
+  border: 1px dashed #333;
+  color: #888;
+  font-size: 12px;
+  text-align: center;
+  max-width: 100%;
+}
+
+.chat-input-area {
+  padding: 12px 16px;
+  border-top: 1px solid #0f3460;
+  display: flex;
+  gap: 8px;
+}
+
+.chat-input-area textarea {
+  flex: 1;
+  background: #1a1a2e;
+  border: 1px solid #0f3460;
+  color: #eee;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 14px;
+  resize: none;
+  min-height: 40px;
+  max-height: 120px;
+  font-family: inherit;
+}
+
+.chat-input-area textarea:focus {
+  outline: none;
+  border-color: #e94560;
+}
+
+/* Layer toggle */
+.layer-toggles {
+  padding: 8px 16px;
+  display: flex;
+  gap: 8px;
+  border-bottom: 1px solid #0f3460;
+}
+
+.layer-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.layer-toggle input {
+  accent-color: #e94560;
+}
+
+/* Loading */
+.loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  color: #888;
+  font-size: 13px;
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #333;
+  border-top-color: #e94560;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Popup */
+.fire-popup-container .maplibregl-popup-content {
+  background: #ffffff;
+  color: #1a1a1a;
+  padding: 12px 16px;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.fire-popup-container .maplibregl-popup-tip {
+  background: #ffffff;
+}
+
+.fire-popup {
+  font-size: 14px;
+  line-height: 1.6;
+  color: #1a1a1a;
+}
+
+.fire-popup strong {
+  color: #e94560;
+  font-size: 15px;
+}
+
+/* Map Legend */
+.map-legend {
+  position: absolute;
+  bottom: 60px;
+  left: 10px;
+  background: #16213e;
+  border: 1px solid #0f3460;
+  border-radius: 8px;
+  padding: 12px 16px;
+  z-index: 1;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  min-width: 320px;
+}
+
+.legend-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e94560;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.legend-item:last-child {
+  margin-bottom: 0;
+}
+
+.legend-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  flex-shrink: 0;
+}
+
+.legend-text {
+  font-size: 12px;
+  color: #ddd;
+  line-height: 1.4;
+}
+
+/* Burn Popup */
+.burn-popup-container .maplibregl-popup-content {
+  background: #ffffff;
+  color: #1a1a1a;
+  padding: 12px 16px;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.burn-popup-container .maplibregl-popup-tip {
+  background: #ffffff;
+}
+
+.burn-popup {
+  font-size: 14px;
+  line-height: 1.6;
+  color: #1a1a1a;
+}
+
+.burn-popup strong {
+  color: #dc2626;
+  font-size: 15px;
+}
+
+/* Results Visualization */
+.results-visualization {
+  margin-top: 16px;
+  padding: 16px;
+  background: rgba(15, 52, 96, 0.3);
+  border-radius: 8px;
+  border: 1px solid #0f3460;
+}
+
+.charts-container {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.result-chart {
+  background: rgba(26, 26, 46, 0.5);
+  padding: 12px;
+  border-radius: 6px;
+  border: 1px solid #1a1a4e;
+}
+
+.result-chart h4 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  color: #e94560;
+  font-weight: 600;
+}
+
+.charts-row {
+  display: flex;
+  gap: 16px;
+  justify-content: space-around;
+}
+
+.mini-chart {
+  flex: 1;
+  max-width: 45%;
+}
+
+.chart-title {
+  text-align: center;
+  font-size: 12px;
+  color: #888;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.chart-stats {
+  display: flex;
+  justify-content: space-around;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #1a1a4e;
+  font-size: 13px;
+  color: #ccc;
+}
+
+.chart-stats div {
+  text-align: center;
+}
+
+.chart-stats strong {
+  color: #fff;
+  font-size: 15px;
+  display: block;
+  margin-top: 4px;
+}
+
+.export-buttons {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #1a1a4e;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.export-label {
+  font-size: 13px;
+  color: #888;
+  margin-right: 8px;
+}
+
+.btn-export {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 1px solid;
+}
+
+.btn-geojson {
+  background: rgba(74, 222, 128, 0.1);
+  border-color: #4ade80;
+  color: #4ade80;
+}
+
+.btn-geojson:hover {
+  background: rgba(74, 222, 128, 0.2);
+  transform: translateY(-1px);
+}
+
+.btn-csv {
+  background: rgba(255, 140, 66, 0.1);
+  border-color: #ff8c42;
+  color: #ff8c42;
+}
+
+.btn-csv:hover {
+  background: rgba(255, 140, 66, 0.2);
+  transform: translateY(-1px);
+}
+
+/* Recharts tooltip customization */
+.recharts-tooltip-wrapper {
+  z-index: 1000;
+}
+
+.recharts-default-tooltip {
+  background: #1a1a2e !important;
+  border: 1px solid #0f3460 !important;
+  border-radius: 6px !important;
+  padding: 8px 12px !important;
+}
+
+.recharts-tooltip-label {
+  color: #fff !important;
+  font-weight: 600 !important;
+}
+
+.recharts-tooltip-item {
+  color: #ccc !important;
+}
+

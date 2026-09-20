@@ -1,0 +1,35 @@
+# Django core
+Django==5.1.4
+djangorestframework==3.15.2
+django-cors-headers==4.6.0
+gunicorn==23.0.0
+
+# PostGIS support
+djangorestframework-gis==1.1
+psycopg2-binary==2.9.10
+
+# Geospatial processing
+rasterio==1.4.3
+geopandas==1.0.1
+shapely==2.0.6
+numpy==2.2.0
+pystac-client==0.8.5
+planetary-computer==1.0.0
+requests==2.32.3
+
+# Overture Maps support
+duckdb>=1.1.0
+pyarrow>=15.0.0
+
+# HTTP client for APIs
+httpx==0.28.1
+aiohttp==3.11.11
+
+# LLM integration
+openai==1.58.1
+
+# Environment variables
+python-dotenv==1.0.1
+
+# API documentation
+drf-spectacular==0.28.0

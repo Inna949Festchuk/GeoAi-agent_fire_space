@@ -1,0 +1,77 @@
+# Development docker-compose (no nginx, with hot-reload)
+services:
+  db:
+    build: ./db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    command: >
+      sh -c "
+        python manage.py makemigrations fires &&
+        python manage.py migrate &&
+        python manage.py runserver 0.0.0.0:8000
+      "
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
+      - DJANGO_DEBUG=True
+      - DJANGO_ALLOWED_HOSTS=*
+      - LLM_API_BASE_URL=${LLM_API_BASE_URL}
+      - LLM_API_KEY=${LLM_API_KEY}
+      - LLM_MODEL=${LLM_MODEL}
+      - FIRMS_API_KEY=${FIRMS_API_KEY}
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  mcp_server:
+    build: ./mcp_server
+    command: python server.py
+    environment:
+      - BACKEND_URL=http://backend:8000
+      - FIRMS_API_KEY=${FIRMS_API_KEY}
+    volumes:
+      - ./mcp_server:/app
+    ports:
+      - "8001:8001"
+    depends_on:
+      - backend
+
+  frontend:
+    build: ./frontend
+    command: npm run dev -- --host 0.0.0.0
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/vite.config.js:/app/vite.config.js
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
