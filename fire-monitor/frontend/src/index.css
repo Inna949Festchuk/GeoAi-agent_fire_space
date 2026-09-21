@@ -258,8 +258,8 @@ body {
   to { transform: rotate(360deg); }
 }
 
-/* Popup */
-.fire-popup-container .maplibregl-popup-content {
+/* Popup - единый стиль для всех попапов */
+.map-popup-container .maplibregl-popup-content {
   background: #ffffff;
   color: #1a1a1a;
   padding: 12px 16px;
@@ -267,13 +267,66 @@ body {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   font-size: 14px;
   line-height: 1.6;
+  max-width: 300px;
 }
 
-.fire-popup-container .maplibregl-popup-tip {
+.map-popup-container .maplibregl-popup-tip {
   background: #ffffff;
 }
 
-.fire-popup {
+.map-popup {
+  font-size: 14px;
+  line-height: 1.6;
+  color: #1a1a1a;
+}
+
+.map-popup strong {
+  color: #e94560;
+  font-size: 15px;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.map-popup .popup-row {
+  display: flex;
+  justify-content: space-between;
+  margin: 2px 0;
+}
+
+.map-popup .popup-label {
+  color: #666;
+  font-size: 13px;
+}
+
+.map-popup .popup-value {
+  color: #1a1a1a;
+  font-weight: 500;
+  font-size: 13px;
+}
+
+/* Legacy popup styles (для обратной совместимости) */
+.fire-popup-container .maplibregl-popup-content,
+.burn-popup-container .maplibregl-popup-content,
+.custom-popup-container .maplibregl-popup-content {
+  background: #ffffff;
+  color: #1a1a1a;
+  padding: 12px 16px;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  font-size: 14px;
+  line-height: 1.6;
+  max-width: 300px;
+}
+
+.fire-popup-container .maplibregl-popup-tip,
+.burn-popup-container .maplibregl-popup-tip,
+.custom-popup-container .maplibregl-popup-tip {
+  background: #ffffff;
+}
+
+.fire-popup,
+.burn-popup,
+.custom-popup {
   font-size: 14px;
   line-height: 1.6;
   color: #1a1a1a;
@@ -282,6 +335,22 @@ body {
 .fire-popup strong {
   color: #e94560;
   font-size: 15px;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.burn-popup strong {
+  color: #dc2626;
+  font-size: 15px;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.custom-popup strong {
+  color: #0f3460;
+  font-size: 15px;
+  display: block;
+  margin-bottom: 4px;
 }
 
 /* Map Legend */

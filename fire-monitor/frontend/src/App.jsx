@@ -6,6 +6,7 @@ import { fetchFires, fetchFiresFromFIRMS, fetchBurns, fetchStats } from './api/c
 function App() {
   const [fireData, setFireData] = useState(null)
   const [burnData, setBurnData] = useState(null)
+  const [customData, setCustomData] = useState(null)
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(false)
   const [bbox, setBbox] = useState(null)
@@ -66,15 +67,33 @@ function App() {
 
   const handleChatResponse = async (mapDataList) => {
     if (mapDataList && mapDataList.length > 0) {
+      // Собираем все custom features в один массив
+      const allCustomFeatures = []
+      
       // Обрабатываем каждый результат в зависимости от типа
       mapDataList.forEach(item => {
         if (item.type === 'burn') {
           setBurnData(item.data)
+        } else if (item.type === 'custom') {
+          // Собираем все features из custom данных
+          if (item.data?.features) {
+            allCustomFeatures.push(...item.data.features)
+          } else if (item.data?.type === 'Feature') {
+            allCustomFeatures.push(item.data)
+          }
         } else {
           setFireData(item.data)
         }
       })
       
+      // Устанавливаем объединённые custom данные
+      if (allCustomFeatures.length > 0) {
+        setCustomData({
+          type: 'FeatureCollection',
+          features: allCustomFeatures
+        })
+      }
+
       // Update stats after chat response
       const searchBbox = bbox || [75, 55, 110, 75]
       try {
@@ -92,6 +111,7 @@ function App() {
         <MapView
           fireData={fireData}
           burnData={burnData}
+          customData={customData}
           showFires={showFires}
           showBurns={showBurns}
           onMapMove={handleMapMove}

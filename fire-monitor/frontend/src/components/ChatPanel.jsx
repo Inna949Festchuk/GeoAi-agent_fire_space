@@ -34,7 +34,16 @@ function ChatPanel({ bbox, onResponse }) {
         { role: 'assistant', content: result.response, actions: result.actions },
       ])
 
-      if (result.map_data_list && result.map_data_list.length > 0) {
+      // Обработка map_data от execute_python
+      if (result.map_data) {
+        try {
+          const mapDataList = result.map_data_list || []
+          mapDataList.push(result.map_data)
+          onResponse?.(mapDataList)
+        } catch (error) {
+          console.error('Failed to process map_data:', error)
+        }
+      } else if (result.map_data_list && result.map_data_list.length > 0) {
         // Передаём все результаты с типами
         onResponse?.(result.map_data_list)
       }

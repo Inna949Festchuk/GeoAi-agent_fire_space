@@ -38,6 +38,7 @@ services:
       - LLM_MODEL=${LLM_MODEL}
       - FIRMS_API_KEY=${FIRMS_API_KEY}
       - PYTHONUNBUFFERED=1
+      - SANDBOX_URL=http://sandbox:8002/execute
     volumes:
       - ./backend:/app
     ports:
@@ -45,6 +46,9 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    networks:
+      - default
+      - sandbox_internal
 
   mcp_server:
     build: ./mcp_server
@@ -52,12 +56,17 @@ services:
     environment:
       - BACKEND_URL=http://backend:8000
       - FIRMS_API_KEY=${FIRMS_API_KEY}
+      - SANDBOX_URL=http://sandbox:8002
     volumes:
       - ./mcp_server:/app
+      - ./backend/geo_processing:/app/geo_processing:ro  # Mount routing.py
     ports:
       - "8001:8001"
     depends_on:
       - backend
+    networks:
+      - default
+      - sandbox_internal
 
   frontend:
     build: ./frontend
@@ -73,5 +82,35 @@ services:
     depends_on:
       - backend
 
+  sandbox:
+    build: ./sandbox
+    container_name: fire-monitor-sandbox
+    networks:
+      - sandbox_internal
+    read_only: true
+    tmpfs:
+      - /tmp:size=50M
+      - /var/tmp:size=10M
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
 volumes:
   postgres_data:
+
+networks:
+  default:
+    driver: bridge
+  
+  sandbox_internal:
+    driver: bridge
+    internal: true

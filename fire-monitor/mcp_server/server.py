@@ -2,7 +2,8 @@
 FastMCP server for Fire Monitor.
 
 Provides MCP tools for AI agents to query fire data,
-search satellite imagery, and get fire statistics.
+search satellite imagery, get fire statistics, build routes,
+and execute custom geospatial code.
 """
 
 import os
@@ -12,6 +13,12 @@ from fastmcp import FastMCP
 
 BACKEND_URL = os.environ.get('BACKEND_URL', 'http://localhost:8000')
 FIRMS_API_KEY = os.environ.get('FIRMS_API_KEY', '')
+SANDBOX_URL = os.environ.get('SANDBOX_URL', 'http://sandbox:8002')
+
+# Import shared routing utilities
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
+from geo_processing.routing import build_route, find_nearest_fire_stations
 
 mcp = FastMCP(
     'fire-monitor',
@@ -20,7 +27,10 @@ mcp = FastMCP(
     - Searching active fire hotspots from VIIRS/MODIS satellites
     - Finding Sentinel-2 scenes for burn severity analysis
     - Getting fire statistics by region
-    
+    - Building driving routes between points (OSRM)
+    - Finding nearest fire stations (OpenStreetMap)
+    - Executing custom Python code for geospatial analysis (sandbox)
+
     All coordinates use WGS84 (EPSG:4326).
     Bounding boxes are [minx, miny, maxx, maxy].
     """,
@@ -235,12 +245,119 @@ async def start_burn_mapping(
         return response.json()
 
 
+# =============================================================================
+# ROUTING AND GEOLOCATION TOOLS
+# =============================================================================
+
+@mcp.tool()
+async def build_route_mcp(
+    start_lon: float,
+    start_lat: float,
+    end_lon: float,
+    end_lat: float,
+) -> dict:
+    """
+    Build a driving route between two points using OSRM (Open Source Routing Machine).
+    
+    Returns GeoJSON with route geometry, distance (km), and duration (minutes).
+    The route follows actual roads, not straight lines.
+    
+    Args:
+        start_lon: Start point longitude
+        start_lat: Start point latitude
+        end_lon: End point longitude
+        end_lat: End point latitude
+    
+    Returns:
+        Dict with geojson (FeatureCollection containing route line + start/end points),
+        distance_km, duration_min, and success flag.
+    """
+    start = [start_lon, start_lat]
+    end = [end_lon, end_lat]
+    return build_route(start, end)
+
+
+@mcp.tool()
+async def find_nearest_fire_stations_mcp(
+    lat: float,
+    lon: float,
+    radius_km: int = 50,
+) -> dict:
+    """
+    Find nearest fire stations using OpenStreetMap (Overpass API).
+    
+    Returns GeoJSON with fire station locations and distances from the given point.
+    
+    Args:
+        lat: Latitude of the search center (e.g., fire location)
+        lon: Longitude of the search center
+        radius_km: Search radius in kilometers (default: 50)
+    
+    Returns:
+        Dict with geojson (FeatureCollection of fire stations),
+        list of top-10 nearest stations with distances, and total_found count.
+    """
+    return find_nearest_fire_stations(lat, lon, radius_km)
+
+
+@mcp.tool()
+async def execute_python_mcp(
+    code: str,
+    context: dict | None = None,
+) -> dict:
+    """
+    Execute custom Python code in a secure sandbox for geospatial analysis.
+    
+    The sandbox has pre-imported libraries:
+    - numpy (as np)
+    - pandas (as pd)
+    - geopandas (as gpd)
+    - shapely.geometry: Point, LineString, Polygon, shape, mapping, box
+    - shapely.ops: unary_union, transform
+    
+    IMPORTANT: Do NOT write 'import' statements — all libraries are pre-imported.
+    NO network access is allowed inside the sandbox.
+    
+    To return GeoJSON for map display, assign it to the __result__ variable.
+    
+    Args:
+        code: Python code to execute (without import statements)
+        context: Optional dict of variables to inject (e.g., GeoJSON from previous tools)
+    
+    Returns:
+        Dict with success flag, stdout, stderr, and result (GeoJSON if __result__ was set).
+    
+    Example:
+        code: "gdf = gpd.GeoDataFrame.from_features(context['fires']['features']); __result__ = gdf.__geo_interface__"
+        context: {"fires": geojson_from_search_fires}
+    """
+    if context is None:
+        context = {}
+    
+    async with httpx.AsyncClient(timeout=35.0) as client:
+        response = await client.post(
+            f'{SANDBOX_URL}/execute',
+            json={'code': code, 'context': context}
+        )
+    
+    if response.status_code == 400:
+        return {"error": f"Security violation: {response.json().get('detail')}", "success": False}
+    if response.status_code == 408:
+        return {"error": "Timeout: Code execution exceeded 30s limit", "success": False}
+    if response.status_code == 429:
+        return {"error": "Rate limit exceeded", "success": False}
+    if response.status_code != 200:
+        return {"error": f"Sandbox error: {response.text}", "success": False}
+    
+    return response.json()
+
+
 @mcp.resource('fire-monitor://info')
 async def service_info() -> str:
     """Get information about the Fire Monitor service."""
     return json.dumps({
         'service': 'Fire Monitor',
-        'version': '0.1.0',
+        'version': '0.2.0',
         'description': 'AI-powered wildfire monitoring using satellite data',
         'data_sources': ['VIIRS_SNPP', 'VIIRS_NOAA20', 'MODIS_Aqua', 'MODIS_Terra', 'Sentinel-2'],
         'tools': [
@@ -250,6 +367,9 @@ async def service_info() -> str:
             'get_burn_stats',
             'start_fire_detection',
             'start_burn_mapping',
+            'build_route_mcp',
+            'find_nearest_fire_stations_mcp',
+            'execute_python_mcp',
         ],
     }, indent=2)
 
