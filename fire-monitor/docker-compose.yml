@@ -45,13 +45,13 @@ services:
         condition: service_healthy
 
   mcp_server:
-    build: ./mcp_server
+    build:
+      context: .
+      dockerfile: mcp_server/Dockerfile
     command: python server.py
     environment:
       - BACKEND_URL=http://backend:8000
       - FIRMS_API_KEY=${FIRMS_API_KEY}
-    volumes:
-      - ./mcp_server:/app
     ports:
       - "8001:8001"
     depends_on:

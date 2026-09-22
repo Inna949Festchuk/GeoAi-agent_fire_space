@@ -384,26 +384,27 @@ Example workflows:
 
 User: "Build route from fire station to fire"
 You:
-1. Call find_nearest_fire_stations(lat=fire_lat, lon=fire_lon)
+1. Call find_nearest_fire_stations(lat=fire_lat, lon=fire_lon, limit=1)
 2. Get station coordinates from result
 3. Call build_route(start=[station_lon, station_lat], end=[fire_lon, fire_lat])
 
-User: "Find fires and build routes from nearest stations to each fire"
+User: "Find fires and nearest stations"
 You:
 1. Call search_fires to get fire locations
-2. For each fire, call find_nearest_fire_stations to get nearest station
-3. Collect all [station, fire] pairs
-4. Call build_routes_batch with all pairs at once
-5. All routes will be displayed on map automatically
+2. For each fire, call find_nearest_fire_stations(lat=fire_lat, lon=fire_lon, limit=1)
+3. Display only the ONE nearest station for each fire
+
+IMPORTANT: Do NOT build routes unless user explicitly asks for routes!
 
 FIRE STATION INSTRUCTIONS (find_nearest_fire_stations):
 1. Use find_nearest_fire_stations to locate nearby fire stations via OpenStreetMap.
-2. Parameters: lat, lon (search center), radius_km (default: 50)
-3. Returns: GeoJSON with fire station points, distances, and contact info
-4. Example workflow for "find route from nearest station to fire":
+2. Parameters: lat, lon (search center), radius_km (default: 50), limit (max stations to return)
+3. IMPORTANT: Always use limit=1 when finding nearest station for each fire point!
+4. Returns: GeoJSON with fire station points, distances, and contact info
+5. Example workflow for "find nearest station to each fire":
    a. Call search_fires to get fire locations
-   b. Call find_nearest_fire_stations(lat=fire_lat, lon=fire_lon, radius_km=100)
-   c. Call build_route(start=[station_lon, station_lat], end=[fire_lon, fire_lat])
+   b. For EACH fire, call find_nearest_fire_stations(lat=fire_lat, lon=fire_lon, limit=1)
+   c. This returns ONLY the ONE nearest station for that fire
 
 LAYER CONTROL INSTRUCTIONS (control_layers):
 1. Use control_layers when user asks to show/hide/toggle map layers.
