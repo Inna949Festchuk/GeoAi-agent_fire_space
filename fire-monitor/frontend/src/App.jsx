@@ -1,8 +1,33 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import MapView from './components/MapView'
 import ChatPanel from './components/ChatPanel'
 import LayerPanel from './components/LayerPanel'
-import { fetchFires, fetchFiresFromFIRMS, fetchBurns, fetchStats } from './api/client'
+import { fetchFires, fetchBurns, fetchStats } from './api/client'
+
+// Ключи для localStorage
+const STORAGE_KEYS = {
+  SIDEBAR_WIDTH: 'fireMonitor_sidebarWidth',
+  SHOW_FIRES: 'fireMonitor_showFires',
+  SHOW_BURNS: 'fireMonitor_showBurns',
+  SHOW_ROUTES: 'fireMonitor_showRoutes',
+  SHOW_STATIONS: 'fireMonitor_showFireStations',
+  SHOW_CUSTOM: 'fireMonitor_showCustom',
+}
+
+// Утиита для чтения из localStorage
+const getStoredBool = (key, defaultValue) => {
+  const stored = localStorage.getItem(key)
+  return stored !== null ? stored === 'true' : defaultValue
+}
+
+const getStoredNumber = (key, defaultValue, min, max) => {
+  const stored = localStorage.getItem(key)
+  if (stored !== null) {
+    const num = parseInt(stored, 10)
+    if (!isNaN(num) && num >= min && num <= max) return num
+  }
+  return defaultValue
+}
 
 function App() {
   const [fireData, setFireData] = useState(null)
@@ -11,22 +36,69 @@ function App() {
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(false)
   const [bbox, setBbox] = useState(null)
-  const [source, setSource] = useState('all')
-  const [days, setDays] = useState(1)
-  
-  // Состояния видимости слоёв
-  const [showFires, setShowFires] = useState(true)
-  const [showBurns, setShowBurns] = useState(true)
-  const [showRoutes, setShowRoutes] = useState(true)
-  const [showFireStations, setShowFireStations] = useState(true)
-  const [showCustom, setShowCustom] = useState(true)
+
+  // Состояния видимости слоёв (с сохранением в localStorage)
+  const [showFires, setShowFires] = useState(() => getStoredBool(STORAGE_KEYS.SHOW_FIRES, true))
+  const [showBurns, setShowBurns] = useState(() => getStoredBool(STORAGE_KEYS.SHOW_BURNS, true))
+  const [showRoutes, setShowRoutes] = useState(() => getStoredBool(STORAGE_KEYS.SHOW_ROUTES, true))
+  const [showFireStations, setShowFireStations] = useState(() => getStoredBool(STORAGE_KEYS.SHOW_STATIONS, true))
+  const [showCustom, setShowCustom] = useState(() => getStoredBool(STORAGE_KEYS.SHOW_CUSTOM, true))
+
+  // Resizable sidebar
+  const [sidebarWidth, setSidebarWidth] = useState(() => 
+    getStoredNumber(STORAGE_KEYS.SIDEBAR_WIDTH, 570, 300, 800)
+  )
+  const [isResizing, setIsResizing] = useState(false)
+  const resizeRef = useRef(null)
+
+  // Сохранение состояния слоёв в localStorage
+  useEffect(() => { localStorage.setItem(STORAGE_KEYS.SHOW_FIRES, showFires) }, [showFires])
+  useEffect(() => { localStorage.setItem(STORAGE_KEYS.SHOW_BURNS, showBurns) }, [showBurns])
+  useEffect(() => { localStorage.setItem(STORAGE_KEYS.SHOW_ROUTES, showRoutes) }, [showRoutes])
+  useEffect(() => { localStorage.setItem(STORAGE_KEYS.SHOW_STATIONS, showFireStations) }, [showFireStations])
+  useEffect(() => { localStorage.setItem(STORAGE_KEYS.SHOW_CUSTOM, showCustom) }, [showCustom])
+
+  // Сохранение ширины sidebar
+  useEffect(() => { localStorage.setItem(STORAGE_KEYS.SIDEBAR_WIDTH, sidebarWidth) }, [sidebarWidth])
+
+  // Resize handlers
+  const handleMouseDown = useCallback((e) => {
+    e.preventDefault()
+    setIsResizing(true)
+  }, [])
+
+  const handleMouseMove = useCallback((e) => {
+    if (!isResizing) return
+    const newWidth = window.innerWidth - e.clientX
+    const clampedWidth = Math.max(300, Math.min(800, newWidth))
+    setSidebarWidth(clampedWidth)
+  }, [isResizing])
+
+  const handleMouseUp = useCallback(() => {
+    setIsResizing(false)
+  }, [])
+
+  useEffect(() => {
+    if (isResizing) {
+      document.addEventListener('mousemove', handleMouseMove)
+      document.addEventListener('mouseup', handleMouseUp)
+      document.body.style.cursor = 'col-resize'
+      document.body.style.userSelect = 'none'
+    } else {
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [isResizing, handleMouseMove, handleMouseUp])
 
   // Load fires and burns on initial mount
   useEffect(() => {
     const loadInitialData = async () => {
       setLoading(true)
       try {
-        // Default bbox for Siberia (extended to include 79° lon)
         const defaultBbox = [75, 55, 110, 75]
         const [fires, burns, statsData] = await Promise.all([
           fetchFires({ bbox: defaultBbox, source: 'all', days: 1 }),
@@ -45,27 +117,6 @@ function App() {
     }
     loadInitialData()
   }, [])
-
-  const handleSearch = async () => {
-    setLoading(true)
-    try {
-      // Use current bbox or default to extended Siberia
-      const searchBbox = bbox || [75, 55, 110, 75]
-      // Fetch fresh data from NASA FIRMS
-      const [fireResult, burnsResult, statsData] = await Promise.all([
-        fetchFiresFromFIRMS({ bbox: searchBbox, source, days }),
-        fetchBurns({ bbox: searchBbox }),
-        fetchStats({ bbox: searchBbox, days }),
-      ])
-      setFireData(fireResult)
-      setBurnData(burnsResult)
-      setStats(statsData)
-    } catch (err) {
-      console.error('Search failed:', err)
-    } finally {
-      setLoading(false)
-    }
-  }
 
   const handleMapMove = (newBbox) => {
     setBbox(newBbox)
@@ -158,39 +209,20 @@ function App() {
           onMapMove={handleMapMove}
         />
       </div>
-      <div className="sidebar">
+      <div 
+        className="sidebar" 
+        style={{ width: `${sidebarWidth}px` }}
+      >
+        {/* Resize handle */}
+        <div 
+          ref={resizeRef}
+          className="sidebar-resize-handle"
+          onMouseDown={handleMouseDown}
+        />
+        
         <div className="sidebar-header">
           <h1>🔥 Fire Monitor</h1>
           <p>Мониторинг лесных пожаров из космоса</p>
-        </div>
-
-        <div className="controls">
-          <div className="control-group">
-            <label>Спутник</label>
-            <select value={source} onChange={(e) => setSource(e.target.value)}>
-              <option value="all">Все</option>
-              <option value="VIIRS_SNPP">VIIRS Suomi NPP</option>
-              <option value="VIIRS_NOAA20">VIIRS NOAA-20</option>
-              <option value="MODIS_Terra">MODIS Terra</option>
-              <option value="MODIS_Aqua">MODIS Aqua</option>
-            </select>
-          </div>
-          <div className="control-group">
-            <label>Период</label>
-            <select value={days} onChange={(e) => setDays(Number(e.target.value))}>
-              <option value={1}>24 часа</option>
-              <option value={2}>2 дня</option>
-              <option value={3}>3 дня</option>
-              <option value={7}>7 дней</option>
-              <option value={10}>10 дней</option>
-            </select>
-          </div>
-          <div className="control-group">
-            <label>&nbsp;</label>
-            <button className="btn btn-primary" onClick={handleSearch} disabled={loading}>
-              {loading ? 'Загрузка...' : 'Найти пожары'}
-            </button>
-          </div>
         </div>
 
         <LayerPanel
