@@ -3,7 +3,7 @@ import { sendMessage } from '../api/client'
 import ReactMarkdown from 'react-markdown'
 import ResultsVisualization from './ResultsVisualization'
 
-function ChatPanel({ bbox, onResponse }) {
+function ChatPanel({ bbox, onResponse, onLayerAction }) {
   const [messages, setMessages] = useState([
     {
       role: 'system',
@@ -46,6 +46,13 @@ function ChatPanel({ bbox, onResponse }) {
       } else if (result.map_data_list && result.map_data_list.length > 0) {
         // Передаём все результаты с типами
         onResponse?.(result.map_data_list)
+      }
+
+      // Обработка layer_actions от control_layers
+      if (result.layer_actions && result.layer_actions.length > 0) {
+        result.layer_actions.forEach(action => {
+          onLayerAction?.(action)
+        })
       }
     } catch (err) {
       setMessages((prev) => [

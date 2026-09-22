@@ -248,6 +248,32 @@ TOOLS = [
             },
         },
     },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'control_layers',
+            'description': 'Control map layer visibility. Use this when user asks to show/hide/toggle layers like fires, burns, routes, fire stations, or custom analysis results.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'action': {
+                        'type': 'string',
+                        'enum': ['show', 'hide', 'toggle'],
+                        'description': 'Action to perform on layers',
+                    },
+                    'layers': {
+                        'type': 'array',
+                        'items': {
+                            'type': 'string',
+                            'enum': ['fires', 'burns', 'routes', 'fire_stations', 'custom'],
+                        },
+                        'description': 'List of layer IDs to control. Available: fires (fire hotspots), burns (burned areas), routes (driving routes), fire_stations (fire stations), custom (analysis results/polygons)',
+                    },
+                },
+                'required': ['action', 'layers'],
+            },
+        },
+    },
 ]
 
 SYSTEM_PROMPT = """You are a wildfire monitoring AI assistant. You help users track active fires,
@@ -371,6 +397,22 @@ FIRE STATION INSTRUCTIONS (find_nearest_fire_stations):
    b. Call find_nearest_fire_stations(lat=fire_lat, lon=fire_lon, radius_km=100)
    c. Call build_route(start=[station_lon, station_lat], end=[fire_lon, fire_lat])
 
+LAYER CONTROL INSTRUCTIONS (control_layers):
+1. Use control_layers when user asks to show/hide/toggle map layers.
+2. Available layers: fires, burns, routes, fire_stations, custom
+3. Actions: show (make visible), hide (make invisible), toggle (switch state)
+4. Examples:
+   - User: "убери лиловый полигон" → control_layers(action="hide", layers=["custom"])
+   - User: "покажи маршруты" → control_layers(action="show", layers=["routes"])
+   - User: "скрой пожары" → control_layers(action="hide", layers=["fires"])
+   - User: "переключи гари" → control_layers(action="toggle", layers=["burns"])
+5. Layer descriptions:
+   - fires: fire hotspots (red/orange/green points)
+   - burns: burned areas (red/orange/yellow polygons)
+   - routes: driving routes (orange dashed lines)
+   - fire_stations: fire stations (blue points)
+   - custom: analysis results from sandbox (purple polygons/points)
+
 Respond in the same language as the user's message."""
 
 
@@ -387,6 +429,7 @@ def handle_chat_message(message, bbox=None):
         - response: AI text response
         - map_data: Optional GeoJSON data for map display
         - actions: List of actions taken
+        - layer_actions: Optional list of layer control actions
     """
     client = OpenAI(
         api_key=settings.LLM_API_KEY,
@@ -405,6 +448,7 @@ def handle_chat_message(message, bbox=None):
     actions = []
     map_data_list = []
     tool_results = {}
+    layer_actions = []  # Команды управления слоями
     max_iterations = 10  # Защита от бесконечного цикла
     iteration = 0
 
@@ -464,6 +508,10 @@ def handle_chat_message(message, bbox=None):
                 tool_results[func_name] = result['map_data'].get('data')
                 map_data_list.append(result['map_data'])
 
+            # Собираем layer_actions
+            if result.get('layer_actions'):
+                layer_actions.extend(result['layer_actions'])
+
             messages.append({
                 'role': 'tool',
                 'tool_call_id': tool_call.id,
@@ -477,6 +525,7 @@ def handle_chat_message(message, bbox=None):
         'response': text,
         'map_data_list': map_data_list,  # Все результаты с типами
         'actions': actions,
+        'layer_actions': layer_actions if layer_actions else None,
     }
 
 
@@ -934,6 +983,46 @@ def execute_tool(name, args, context_bbox=None):
                 "type": "custom",
                 "data": result['geojson']
             }
+        }
+
+    elif name == 'control_layers':
+        action_type = args.get('action')
+        layers = args.get('layers', [])
+
+        if not action_type or not layers:
+            return {"summary": {"error": "action and layers are required"}}
+
+        # Формируем layer_actions для фронтенда
+        layer_actions = []
+        for layer_id in layers:
+            layer_actions.append({
+                "action": action_type,
+                "layer": layer_id
+            })
+
+        layer_names = {
+            'fires': 'Очаги пожаров',
+            'burns': 'Гари',
+            'routes': 'Маршруты',
+            'fire_stations': 'Пожарные части',
+            'custom': 'Результаты анализа'
+        }
+
+        action_names = {
+            'show': 'показан',
+            'hide': 'скрыт',
+            'toggle': 'переключен'
+        }
+
+        layers_display = ', '.join([layer_names.get(l, l) for l in layers])
+        action_display = action_names.get(action_type, action_type)
+
+        return {
+            "summary": {
+                "success": True,
+                "message": f"Слой '{layers_display}' {action_display}"
+            },
+            "layer_actions": layer_actions
         }
 
     return {'summary': {'error': f'Unknown tool: {name}'}}

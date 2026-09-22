@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import MapView from './components/MapView'
 import ChatPanel from './components/ChatPanel'
+import LayerPanel from './components/LayerPanel'
 import { fetchFires, fetchFiresFromFIRMS, fetchBurns, fetchStats } from './api/client'
 
 function App() {
@@ -12,8 +13,13 @@ function App() {
   const [bbox, setBbox] = useState(null)
   const [source, setSource] = useState('all')
   const [days, setDays] = useState(1)
+  
+  // Состояния видимости слоёв
   const [showFires, setShowFires] = useState(true)
   const [showBurns, setShowBurns] = useState(true)
+  const [showRoutes, setShowRoutes] = useState(true)
+  const [showFireStations, setShowFireStations] = useState(true)
+  const [showCustom, setShowCustom] = useState(true)
 
   // Load fires and burns on initial mount
   useEffect(() => {
@@ -65,6 +71,38 @@ function App() {
     setBbox(newBbox)
   }
 
+  // Обработка команд управления слоями от AI-агента
+  const handleLayerAction = (action) => {
+    const { action: actionType, layer } = action
+    
+    const layerSetters = {
+      fires: setShowFires,
+      burns: setShowBurns,
+      routes: setShowRoutes,
+      fire_stations: setShowFireStations,
+      custom: setShowCustom,
+    }
+    
+    const layerStates = {
+      fires: showFires,
+      burns: showBurns,
+      routes: showRoutes,
+      fire_stations: showFireStations,
+      custom: showCustom,
+    }
+    
+    const setter = layerSetters[layer]
+    if (!setter) return
+    
+    if (actionType === 'show') {
+      setter(true)
+    } else if (actionType === 'hide') {
+      setter(false)
+    } else if (actionType === 'toggle') {
+      setter(!layerStates[layer])
+    }
+  }
+
   const handleChatResponse = async (mapDataList) => {
     if (mapDataList && mapDataList.length > 0) {
       // Собираем все custom features в один массив
@@ -114,6 +152,9 @@ function App() {
           customData={customData}
           showFires={showFires}
           showBurns={showBurns}
+          showRoutes={showRoutes}
+          showFireStations={showFireStations}
+          showCustom={showCustom}
           onMapMove={handleMapMove}
         />
       </div>
@@ -152,45 +193,23 @@ function App() {
           </div>
         </div>
 
-        <div className="layer-toggles">
-          <label className="layer-toggle">
-            <input
-              type="checkbox"
-              checked={showFires}
-              onChange={(e) => setShowFires(e.target.checked)}
-            />
-            Очаги пожаров
-          </label>
-          <label className="layer-toggle">
-            <input
-              type="checkbox"
-              checked={showBurns}
-              onChange={(e) => setShowBurns(e.target.checked)}
-            />
-            Гари
-          </label>
-        </div>
-
-        {stats && (
-          <div className="stats-panel">
-            <div className="stat-item">
-              <div className="stat-value">{stats.fires?.total || 0}</div>
-              <div className="stat-label">Очагов</div>
-            </div>
-            <div className="stat-item">
-              <div className="stat-value">{stats.fires?.high_confidence || 0}</div>
-              <div className="stat-label">Высокая довер.</div>
-            </div>
-            <div className="stat-item">
-              <div className="stat-value">{stats.burns?.total_area_ha || 0}</div>
-              <div className="stat-label">Гари</div>
-            </div>
-          </div>
-        )}
+        <LayerPanel
+          showFires={showFires} setShowFires={setShowFires}
+          showBurns={showBurns} setShowBurns={setShowBurns}
+          showRoutes={showRoutes} setShowRoutes={setShowRoutes}
+          showFireStations={showFireStations} setShowFireStations={setShowFireStations}
+          showCustom={showCustom} setShowCustom={setShowCustom}
+          hasFires={fireData?.features?.length > 0}
+          hasBurns={burnData?.features?.length > 0}
+          hasRoutes={customData?.features?.some(f => f.geometry?.type === 'LineString')}
+          hasFireStations={customData?.features?.some(f => f.properties?.type === 'fire_station')}
+          hasCustom={customData?.features?.length > 0}
+        />
 
         <ChatPanel
           bbox={bbox}
           onResponse={handleChatResponse}
+          onLayerAction={handleLayerAction}
         />
       </div>
     </div>

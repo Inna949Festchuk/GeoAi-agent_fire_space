@@ -1,10 +1,39 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useMemo } from 'react'
 import maplibregl from 'maplibre-gl'
 
-function MapView({ fireData, burnData, customData, showFires, showBurns, onMapMove }) {
+function MapView({ 
+  fireData, burnData, customData, 
+  showFires, showBurns, showRoutes, showFireStations, showCustom,
+  onMapMove 
+}) {
   const mapRef = useRef(null)
   const mapContainerRef = useRef(null)
   const moveTimeoutRef = useRef(null)
+
+  // Разделяем customData на категории
+  const { routesData, fireStationsData, otherCustomData } = useMemo(() => {
+    if (!customData?.features) {
+      return { routesData: null, fireStationsData: null, otherCustomData: null }
+    }
+
+    const routes = customData.features.filter(f => 
+      f.geometry?.type === 'LineString' || f.geometry?.type === 'MultiLineString'
+    )
+    const stations = customData.features.filter(f => 
+      f.properties?.type === 'fire_station'
+    )
+    const other = customData.features.filter(f => 
+      f.geometry?.type !== 'LineString' && 
+      f.geometry?.type !== 'MultiLineString' && 
+      f.properties?.type !== 'fire_station'
+    )
+
+    return {
+      routesData: routes.length > 0 ? { type: 'FeatureCollection', features: routes } : null,
+      fireStationsData: stations.length > 0 ? { type: 'FeatureCollection', features: stations } : null,
+      otherCustomData: other.length > 0 ? { type: 'FeatureCollection', features: other } : null,
+    }
+  }, [customData])
 
   useEffect(() => {
     if (mapRef.current) return
@@ -37,26 +66,6 @@ function MapView({ fireData, burnData, customData, showFires, showBurns, onMapMo
 
     map.addControl(new maplibregl.NavigationControl(), 'top-left')
     map.addControl(new maplibregl.ScaleControl(), 'bottom-left')
-
-    // Add legend
-    const legend = document.createElement('div')
-    legend.className = 'map-legend'
-    legend.innerHTML = `
-      <div class="legend-title">Уровень уверенности</div>
-      <div class="legend-item">
-        <span class="legend-dot" style="background: #e94560;"></span>
-        <span class="legend-text">Высокая — реальный пожар</span>
-      </div>
-      <div class="legend-item">
-        <span class="legend-dot" style="background: #ff8c42;"></span>
-        <span class="legend-text">Номинальная — вероятность средняя</span>
-      </div>
-      <div class="legend-item">
-        <span class="legend-dot" style="background: #4ade80;"></span>
-        <span class="legend-text">Низкая — возможно ложное срабатывание</span>
-      </div>
-    `
-    map.getContainer().appendChild(legend)
 
     map.on('moveend', () => {
       if (moveTimeoutRef.current) clearTimeout(moveTimeoutRef.current)
@@ -260,194 +269,162 @@ function MapView({ fireData, burnData, customData, showFires, showBurns, onMapMo
     }
   }, [burnData, showBurns])
 
-  // Update custom layer (from sandbox execute_python)
+  // Update routes layer
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
 
-    // ОЧИСТКА: Удаляем старые custom-слои
-    const layerIds = ['custom-line-layer', 'custom-point-layer', 'custom-polygon-layer', 'custom-polygon-outline']
-    const sourceIds = ['custom-line-data', 'custom-point-data', 'custom-polygon-data']
+    // ОЧИСТКА
+    if (map.getLayer('routes-line-layer')) map.removeLayer('routes-line-layer')
+    if (map.getLayer('routes-points-layer')) map.removeLayer('routes-points-layer')
+    if (map.getSource('routes-line-data')) map.removeSource('routes-line-data')
+    if (map.getSource('routes-points-data')) map.removeSource('routes-points-data')
 
-    layerIds.forEach(layerId => {
-      if (map.getLayer(layerId)) map.removeLayer(layerId)
+    if (!showRoutes || !routesData?.features?.length) return
+
+    // Линии маршрутов
+    map.addSource('routes-line-data', { type: 'geojson', data: routesData })
+    map.addLayer({
+      id: 'routes-line-layer',
+      type: 'line',
+      source: 'routes-line-data',
+      paint: {
+        'line-color': '#ff6b35',
+        'line-width': 4,
+        'line-dasharray': [2, 2],
+      },
     })
-    sourceIds.forEach(sourceId => {
-      if (map.getSource(sourceId)) map.removeSource(sourceId)
-    })
 
-    if (!customData) return
-
-    // Нормализуем данные: если это один Feature, оборачиваем в FeatureCollection
-    let geojson = customData
-    if (customData.type === 'Feature') {
-      geojson = { type: 'FeatureCollection', features: [customData] }
-    } else if (customData.type !== 'FeatureCollection') {
-      return
+    // Точки старта/финиша
+    const routePoints = routesData.features.filter(f => 
+      f.properties?.type === 'start' || f.properties?.type === 'end'
+    )
+    if (routePoints.length > 0) {
+      map.addSource('routes-points-data', { 
+        type: 'geojson', 
+        data: { type: 'FeatureCollection', features: routePoints }
+      })
+      map.addLayer({
+        id: 'routes-points-layer',
+        type: 'circle',
+        source: 'routes-points-data',
+        paint: {
+          'circle-radius': 10,
+          'circle-color': ['match', ['get', 'type'], 'start', '#4ade80', '#e94560'],
+          'circle-stroke-width': 2,
+          'circle-stroke-color': '#fff',
+        },
+      })
     }
 
-    if (geojson.features?.length > 0) {
-      // Разделяем features по типу геометрии (поддержка смешанных коллекций)
-      const points = geojson.features.filter(f =>
-        f.geometry?.type === 'Point' || f.geometry?.type === 'MultiPoint'
-      )
-      const lines = geojson.features.filter(f =>
-        f.geometry?.type === 'LineString' || f.geometry?.type === 'MultiLineString'
-      )
-      const polygons = geojson.features.filter(f =>
-        f.geometry?.type === 'Polygon' || f.geometry?.type === 'MultiPolygon'
-      )
+    // Попап для маршрутов
+    map.on('click', 'routes-line-layer', (e) => {
+      const props = e.features[0].properties
+      let content = '<strong>🛣️ Маршрут</strong>'
+      if (props.distance_km) content += `<div class="popup-row"><span class="popup-label">Расстояние:</span> <span class="popup-value">${props.distance_km} км</span></div>`
+      if (props.duration_min) content += `<div class="popup-row"><span class="popup-label">Время:</span> <span class="popup-value">${props.duration_min} мин</span></div>`
+      new maplibregl.Popup({ className: 'map-popup-container', closeButton: false })
+        .setLngLat(e.lngLat)
+        .setHTML(`<div class="map-popup">${content}</div>`)
+        .addTo(map)
+    })
+  }, [routesData, showRoutes])
 
-      // Отображаем линии (маршруты)
-      if (lines.length > 0) {
-        const lineCollection = { type: 'FeatureCollection', features: lines }
-        map.addSource('custom-line-data', { type: 'geojson', data: lineCollection })
-        map.addLayer({
-          id: 'custom-line-layer',
-          type: 'line',
-          source: 'custom-line-data',
-          paint: {
-            'line-color': '#ff6b35',
-            'line-width': 4,
-            'line-dasharray': [2, 2],
-          },
-        })
-        
-        // Попап для линий маршрутов
-        map.on('click', 'custom-line-layer', (e) => {
-          const props = e.features[0].properties
-          const coordinates = e.lngLat
-          
-          let content = '<strong>🛣️ Маршрут</strong>'
-          if (props.distance_km) {
-            content += `<div class="popup-row"><span class="popup-label">Расстояние:</span> <span class="popup-value">${props.distance_km} км</span></div>`
-          }
-          if (props.duration_min) {
-            content += `<div class="popup-row"><span class="popup-label">Время:</span> <span class="popup-value">${props.duration_min} мин</span></div>`
-          }
-          if (props.name) {
-            content += `<div class="popup-row"><span class="popup-label">Название:</span> <span class="popup-value">${props.name}</span></div>`
-          }
-          
-          new maplibregl.Popup({ className: 'map-popup-container', closeButton: false })
-            .setLngLat(coordinates)
-            .setHTML(`<div class="map-popup">${content}</div>`)
-            .addTo(map)
-        })
-        
-        map.on('mouseenter', 'custom-line-layer', () => {
-          map.getCanvas().style.cursor = 'pointer'
-        })
-        map.on('mouseleave', 'custom-line-layer', () => {
-          map.getCanvas().style.cursor = ''
-        })
-      }
+  // Update fire stations layer
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
 
-      // Отображаем точки
-      if (points.length > 0) {
-        const pointCollection = { type: 'FeatureCollection', features: points }
-        map.addSource('custom-point-data', { type: 'geojson', data: pointCollection })
-        map.addLayer({
-          id: 'custom-point-layer',
-          type: 'circle',
-          source: 'custom-point-data',
-          paint: {
-            'circle-radius': [
-              'match', ['get', 'type'],
-              'start', 10,
-              'end', 10,
-              8
-            ],
-            'circle-color': [
-              'match', ['get', 'type'],
-              'start', '#4ade80',
-              'end', '#e94560',
-              '#00d4ff'
-            ],
-            'circle-stroke-width': 2,
-            'circle-stroke-color': '#fff',
-          },
-        })
-        map.on('click', 'custom-point-layer', (e) => {
-          const props = e.features[0].properties
-          const coords = e.features[0].geometry.coordinates
-          
-          let content = ''
-          if (props.type === 'fire_station') {
-            content = `
-              <strong>🚒 ${props.name || 'Пожарная часть'}</strong>
-              ${props.address ? `<div class="popup-row"><span class="popup-label">Адрес:</span> <span class="popup-value">${props.address}</span></div>` : ''}
-              ${props.phone ? `<div class="popup-row"><span class="popup-label">Телефон:</span> <span class="popup-value">${props.phone}</span></div>` : ''}
-              ${props.distance_km ? `<div class="popup-row"><span class="popup-label">Расстояние:</span> <span class="popup-value">${props.distance_km} км</span></div>` : ''}
-            `
-          } else if (props.type === 'start' || props.type === 'end') {
-            const label = props.type === 'start' ? '🟢 Начало маршрута' : '🔴 Конец маршрута'
-            content = `<strong>${label}</strong>`
-            if (props.distance_km) {
-              content += `<div class="popup-row"><span class="popup-label">Расстояние:</span> <span class="popup-value">${props.distance_km} км</span></div>`
-            }
-            if (props.duration_min) {
-              content += `<div class="popup-row"><span class="popup-label">Время:</span> <span class="popup-value">${props.duration_min} мин</span></div>`
-            }
-          } else {
-            content = `<strong>${props.name || 'Точка'}</strong>`
-            // Показываем все дополнительные свойства
-            Object.entries(props).forEach(([key, value]) => {
-              if (!['name', 'type'].includes(key) && value) {
-                content += `<div class="popup-row"><span class="popup-label">${key}:</span> <span class="popup-value">${value}</span></div>`
-              }
-            })
-          }
-          
-          new maplibregl.Popup({ className: 'map-popup-container', closeButton: false })
-            .setLngLat(coords)
-            .setHTML(`<div class="map-popup">${content}</div>`)
-            .addTo(map)
-        })
-      }
+    // ОЧИСТКА
+    if (map.getLayer('fire-stations-layer')) map.removeLayer('fire-stations-layer')
+    if (map.getSource('fire-stations-data')) map.removeSource('fire-stations-data')
 
-      // Отображаем полигоны
-      if (polygons.length > 0) {
-        const polygonCollection = { type: 'FeatureCollection', features: polygons }
-        map.addSource('custom-polygon-data', { type: 'geojson', data: polygonCollection })
-        map.addLayer({
-          id: 'custom-polygon-layer',
-          type: 'fill',
-          source: 'custom-polygon-data',
-          paint: {
-            'fill-color': '#9d4edd',
-            'fill-opacity': 0.5,
-          },
-        })
-        map.addLayer({
-          id: 'custom-polygon-outline',
-          type: 'line',
-          source: 'custom-polygon-data',
-          paint: {
-            'line-color': '#9d4edd',
-            'line-width': 2,
-            'line-opacity': 0.8,
-          },
-        })
-      }
+    if (!showFireStations || !fireStationsData?.features?.length) return
 
-      // Auto-center на маршруте/полигоне/точке
-      const firstFeature = geojson.features[0]
-      if (firstFeature?.geometry) {
-        if (firstFeature.geometry.type === 'Point') {
-          map.flyTo({ center: firstFeature.geometry.coordinates, zoom: 10, duration: 1500 })
-        } else {
-          const bounds = new maplibregl.LngLatBounds()
-          const extractCoords = (coord) => {
-            if (typeof coord[0] === 'number') bounds.extend(coord)
-            else coord.forEach(extractCoords)
-          }
-          extractCoords(firstFeature.geometry.coordinates)
-          map.fitBounds(bounds, { padding: 50, maxZoom: 12, duration: 1500 })
-        }
-      }
+    map.addSource('fire-stations-data', { type: 'geojson', data: fireStationsData })
+    map.addLayer({
+      id: 'fire-stations-layer',
+      type: 'circle',
+      source: 'fire-stations-data',
+      paint: {
+        'circle-radius': 8,
+        'circle-color': '#00d4ff',
+        'circle-stroke-width': 2,
+        'circle-stroke-color': '#fff',
+      },
+    })
+
+    map.on('click', 'fire-stations-layer', (e) => {
+      const props = e.features[0].properties
+      const coords = e.features[0].geometry.coordinates
+      let content = `<strong>🚒 ${props.name || 'Пожарная часть'}</strong>`
+      if (props.address) content += `<div class="popup-row"><span class="popup-label">Адрес:</span> <span class="popup-value">${props.address}</span></div>`
+      if (props.phone) content += `<div class="popup-row"><span class="popup-label">Телефон:</span> <span class="popup-value">${props.phone}</span></div>`
+      if (props.distance_km) content += `<div class="popup-row"><span class="popup-label">Расстояние:</span> <span class="popup-value">${props.distance_km} км</span></div>`
+      new maplibregl.Popup({ className: 'map-popup-container', closeButton: false })
+        .setLngLat(coords)
+        .setHTML(`<div class="map-popup">${content}</div>`)
+        .addTo(map)
+    })
+
+    map.on('mouseenter', 'fire-stations-layer', () => { map.getCanvas().style.cursor = 'pointer' })
+    map.on('mouseleave', 'fire-stations-layer', () => { map.getCanvas().style.cursor = '' })
+  }, [fireStationsData, showFireStations])
+
+  // Update other custom layer (sandbox results)
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+
+    // ОЧИСТКА
+    if (map.getLayer('custom-polygon-layer')) map.removeLayer('custom-polygon-layer')
+    if (map.getLayer('custom-polygon-outline')) map.removeLayer('custom-polygon-outline')
+    if (map.getLayer('custom-point-layer')) map.removeLayer('custom-point-layer')
+    if (map.getSource('custom-polygon-data')) map.removeSource('custom-polygon-data')
+    if (map.getSource('custom-point-data')) map.removeSource('custom-point-data')
+
+    if (!showCustom || !otherCustomData?.features?.length) return
+
+    const points = otherCustomData.features.filter(f => 
+      f.geometry?.type === 'Point' || f.geometry?.type === 'MultiPoint'
+    )
+    const polygons = otherCustomData.features.filter(f => 
+      f.geometry?.type === 'Polygon' || f.geometry?.type === 'MultiPolygon'
+    )
+
+    if (polygons.length > 0) {
+      const polygonCollection = { type: 'FeatureCollection', features: polygons }
+      map.addSource('custom-polygon-data', { type: 'geojson', data: polygonCollection })
+      map.addLayer({
+        id: 'custom-polygon-layer',
+        type: 'fill',
+        source: 'custom-polygon-data',
+        paint: { 'fill-color': '#9d4edd', 'fill-opacity': 0.5 },
+      })
+      map.addLayer({
+        id: 'custom-polygon-outline',
+        type: 'line',
+        source: 'custom-polygon-data',
+        paint: { 'line-color': '#9d4edd', 'line-width': 2, 'line-opacity': 0.8 },
+      })
     }
-  }, [customData])
+
+    if (points.length > 0) {
+      const pointCollection = { type: 'FeatureCollection', features: points }
+      map.addSource('custom-point-data', { type: 'geojson', data: pointCollection })
+      map.addLayer({
+        id: 'custom-point-layer',
+        type: 'circle',
+        source: 'custom-point-data',
+        paint: {
+          'circle-radius': 8,
+          'circle-color': '#9d4edd',
+          'circle-stroke-width': 2,
+          'circle-stroke-color': '#fff',
+        },
+      })
+    }
+  }, [otherCustomData, showCustom])
 
   return <div ref={mapContainerRef} style={{ width: '100%', height: '100%' }} />
 }
