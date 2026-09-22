@@ -160,36 +160,65 @@ def build_routes_batch(route_pairs: list) -> dict:
     }
 
 
-def find_nearest_fire_stations(lat: float, lon: float, radius_km: int = 50, limit: int = 5) -> dict:
+def find_nearest_fire_stations(lat: float = None, lon: float = None, radius_km: int = 50, limit: int = None, bbox: list = None) -> dict:
     """
-    Find nearest fire stations using Overpass API (OpenStreetMap).
-
+    Find fire stations using Overpass API (OpenStreetMap).
+    
+    Can search in two modes:
+    1. Around a point (lat, lon, radius_km) - returns nearest stations
+    2. In a bounding box (bbox) - returns all stations in area
+    
     Args:
-        lat: Latitude
-        lon: Longitude
-        radius_km: Search radius in kilometers
-        limit: Maximum number of stations to return (default: 5)
-
+        lat: Latitude of center point (optional if bbox provided)
+        lon: Longitude of center point (optional if bbox provided)
+        radius_km: Search radius in kilometers (default: 50, used only with lat/lon)
+        limit: Maximum number of stations to return (default: None = return all)
+        bbox: Bounding box [min_lon, min_lat, max_lon, max_lat] (optional)
+    
     Returns:
         Dict with geojson, stations list, total_found, success
     """
-    radius_m = radius_km * 1000
-
-    # Расширенный поиск по нескольким тегам OSM
-    # В России пожарные части обычно имеют тег amenity=fire_station
-    query = f"""
-    [out:json][timeout:25];
-    (
-      node["amenity"="fire_station"](around:{radius_m},{lat},{lon});
-      way["amenity"="fire_station"](around:{radius_m},{lat},{lon});
-      relation["amenity"="fire_station"](around:{radius_m},{lat},{lon});
-      node["emergency"="fire_station"](around:{radius_m},{lat},{lon});
-      way["emergency"="fire_station"](around:{radius_m},{lat},{lon});
-      way["building"="fire_station"](around:{radius_m},{lat},{lon});
-      node["office"="government"]["government"="fire_service"](around:{radius_m},{lat},{lon});
-    );
-    out center;
-    """
+    # Определяем режим поиска
+    if bbox and len(bbox) == 4:
+        # Поиск в bounding box
+        min_lon, min_lat, max_lon, max_lat = bbox
+        query = f"""
+        [out:json][timeout:25];
+        (
+          node["amenity"="fire_station"]({min_lat},{min_lon},{max_lat},{max_lon});
+          way["amenity"="fire_station"]({min_lat},{min_lon},{max_lat},{max_lon});
+          relation["amenity"="fire_station"]({min_lat},{min_lon},{max_lat},{max_lon});
+          node["emergency"="fire_station"]({min_lat},{min_lon},{max_lat},{max_lon});
+          way["emergency"="fire_station"]({min_lat},{min_lon},{max_lat},{max_lon});
+          way["building"="fire_station"]({min_lat},{min_lon},{max_lat},{max_lon});
+          node["office"="government"]["government"="fire_service"]({min_lat},{min_lon},{max_lat},{max_lon});
+        );
+        out center;
+        """
+        search_description = f"bbox [{min_lon}, {min_lat}, {max_lon}, {max_lat}]"
+        center_lat = (min_lat + max_lat) / 2
+        center_lon = (min_lon + max_lon) / 2
+    elif lat is not None and lon is not None:
+        # Поиск вокруг точки
+        radius_m = radius_km * 1000
+        query = f"""
+        [out:json][timeout:25];
+        (
+          node["amenity"="fire_station"](around:{radius_m},{lat},{lon});
+          way["amenity"="fire_station"](around:{radius_m},{lat},{lon});
+          relation["amenity"="fire_station"](around:{radius_m},{lat},{lon});
+          node["emergency"="fire_station"](around:{radius_m},{lat},{lon});
+          way["emergency"="fire_station"](around:{radius_m},{lat},{lon});
+          way["building"="fire_station"](around:{radius_m},{lat},{lon});
+          node["office"="government"]["government"="fire_service"](around:{radius_m},{lat},{lon});
+        );
+        out center;
+        """
+        search_description = f"radius {radius_km} km from [{lat}, {lon}]"
+        center_lat = lat
+        center_lon = lon
+    else:
+        return {"error": "Either bbox or (lat, lon) must be provided", "success": False}
 
     try:
         # Пробуем серверы по очереди для отказоустойчивости
@@ -221,14 +250,14 @@ def find_nearest_fire_stations(lat: float, lon: float, radius_km: int = 50, limi
         
         data = response.json()
         elements = data.get('elements', [])
-        
+
         if not elements:
-            return {"error": f"No fire stations found within {radius_km} km", "success": False}
-        
+            return {"error": f"No fire stations found in {search_description}", "success": False}
+
         # Обрабатываем результаты
         stations = []
         features = []
-        
+
         for el in elements:
             if 'center' in el:
                 s_lat, s_lon = el['center']['lat'], el['center']['lon']
@@ -236,14 +265,15 @@ def find_nearest_fire_stations(lat: float, lon: float, radius_km: int = 50, limi
                 s_lat, s_lon = el['lat'], el['lon']
             else:
                 continue
-            
+
             tags = el.get('tags', {})
             name = tags.get('name', 'Пожарная часть')
             phone = tags.get('phone', '')
             address = tags.get('addr:street', '')
-            
-            distance_km = haversine_distance(lat, lon, s_lat, s_lon)
-            
+
+            # Рассчитываем расстояние от центра поиска
+            distance_km = haversine_distance(center_lat, center_lon, s_lat, s_lon)
+
             station = {
                 "lat": s_lat,
                 "lon": s_lon,
@@ -253,7 +283,7 @@ def find_nearest_fire_stations(lat: float, lon: float, radius_km: int = 50, limi
                 "distance_km": round(distance_km, 2)
             }
             stations.append(station)
-            
+
             features.append({
                 "type": "Feature",
                 "geometry": {"type": "Point", "coordinates": [s_lon, s_lat]},
@@ -265,14 +295,19 @@ def find_nearest_fire_stations(lat: float, lon: float, radius_km: int = 50, limi
                     "type": "fire_station"
                 }
             })
-        
+
         # Сортируем по расстоянию
         stations.sort(key=lambda x: x['distance_km'])
         features.sort(key=lambda x: x['properties']['distance_km'])
 
-        # Ограничиваем до limit ближайших
-        stations_limited = stations[:limit]
-        features_limited = features[:limit]
+        # Ограничиваем до limit ближайших (если limit указан)
+        if limit is not None and limit > 0:
+            stations_limited = stations[:limit]
+            features_limited = features[:limit]
+        else:
+            # Возвращаем все найденные
+            stations_limited = stations
+            features_limited = features
 
         geojson = {
             "type": "FeatureCollection",
@@ -283,6 +318,8 @@ def find_nearest_fire_stations(lat: float, lon: float, radius_km: int = 50, limi
             "geojson": geojson,
             "stations": stations_limited,
             "total_found": len(stations),
+            "returned_count": len(stations_limited),
+            "search_mode": "bbox" if bbox else "radius",
             "success": True
         }
     

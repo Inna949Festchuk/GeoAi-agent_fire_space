@@ -279,25 +279,33 @@ async def build_route_mcp(
 
 @mcp.tool()
 async def find_nearest_fire_stations_mcp(
-    lat: float,
-    lon: float,
+    lat: float | None = None,
+    lon: float | None = None,
     radius_km: int = 50,
+    limit: int | None = None,
+    bbox: list[float] | None = None,
 ) -> dict:
     """
-    Find nearest fire stations using OpenStreetMap (Overpass API).
+    Find fire stations using OpenStreetMap (Overpass API).
     
-    Returns GeoJSON with fire station locations and distances from the given point.
+    Can search in two modes:
+    1. Around a point (lat, lon, radius_km) - returns nearest stations
+    2. In a bounding box (bbox) - returns all stations in area
     
+    By default (no limit), returns ALL found stations.
+
     Args:
-        lat: Latitude of the search center (e.g., fire location)
-        lon: Longitude of the search center
-        radius_km: Search radius in kilometers (default: 50)
-    
+        lat: Latitude of search center (optional if bbox provided)
+        lon: Longitude of search center (optional if bbox provided)
+        radius_km: Search radius in kilometers (default: 50, used only with lat/lon)
+        limit: Maximum number of stations to return (default: None = return all found)
+        bbox: Bounding box [min_lon, min_lat, max_lon, max_lat] to search in (alternative to lat/lon)
+
     Returns:
         Dict with geojson (FeatureCollection of fire stations),
-        list of top-10 nearest stations with distances, and total_found count.
+        stations list, total_found count, returned_count, and search_mode.
     """
-    return find_nearest_fire_stations(lat, lon, radius_km)
+    return find_nearest_fire_stations(lat, lon, radius_km, limit, bbox)
 
 
 @mcp.tool()

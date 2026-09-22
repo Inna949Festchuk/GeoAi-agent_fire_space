@@ -227,24 +227,32 @@ TOOLS = [
         'type': 'function',
         'function': {
             'name': 'find_nearest_fire_stations',
-            'description': 'Find nearest fire stations using OpenStreetMap (Overpass API). Returns GeoJSON with fire station locations and distances.',
+            'description': 'Find fire stations using OpenStreetMap (Overpass API). Can search around a point or in a bounding box. Returns GeoJSON with fire station locations and distances.',
             'parameters': {
                 'type': 'object',
                 'properties': {
                     'lat': {
                         'type': 'number',
-                        'description': 'Latitude of search center',
+                        'description': 'Latitude of search center (required if bbox not provided)',
                     },
                     'lon': {
                         'type': 'number',
-                        'description': 'Longitude of search center',
+                        'description': 'Longitude of search center (required if bbox not provided)',
                     },
                     'radius_km': {
                         'type': 'integer',
-                        'description': 'Search radius in kilometers (default: 50)',
+                        'description': 'Search radius in kilometers (default: 50, used only with lat/lon)',
+                    },
+                    'limit': {
+                        'type': 'integer',
+                        'description': 'Maximum number of stations to return (default: None = return all found)',
+                    },
+                    'bbox': {
+                        'type': 'array',
+                        'items': {'type': 'number'},
+                        'description': 'Bounding box [min_lon, min_lat, max_lon, max_lat] to search in (alternative to lat/lon)',
                     },
                 },
-                'required': ['lat', 'lon'],
             },
         },
     },
@@ -962,23 +970,30 @@ def execute_tool(name, args, context_bbox=None):
         lat = args.get('lat')
         lon = args.get('lon')
         radius_km = args.get('radius_km', 50)
-        limit = args.get('limit', 5)
-
-        if lat is None or lon is None:
-            return {"summary": {"error": "lat and lon are required"}}
+        limit = args.get('limit')  # None = вернуть все найденные
+        bbox = args.get('bbox')  # [min_lon, min_lat, max_lon, max_lat]
 
         # Используем общую функцию из routing.py
-        result = find_nearest_fire_stations(lat, lon, radius_km, limit)
+        result = find_nearest_fire_stations(lat, lon, radius_km, limit, bbox)
 
         if not result.get('success'):
             return {"summary": {"error": result.get('error', 'Unknown error')}}
 
+        summary = {
+            "total_found": result['total_found'],
+            "returned_count": result['returned_count'],
+            "search_mode": result['search_mode'],
+            "success": True
+        }
+        
+        # Добавляем информацию о поиске
+        if result['search_mode'] == 'bbox':
+            summary['message'] = f"Найдено {result['total_found']} пожарных частей в экстенте карты"
+        else:
+            summary['message'] = f"Найдено {result['total_found']} пожарных частей, показано {result['returned_count']}"
+
         return {
-            "summary": {
-                "total_found": result['total_found'],
-                "nearest": result['stations'],
-                "success": True
-            },
+            "summary": summary,
             "map_data": {
                 "type": "custom",
                 "data": result['geojson']
