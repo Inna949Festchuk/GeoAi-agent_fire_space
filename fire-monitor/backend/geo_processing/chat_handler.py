@@ -606,6 +606,20 @@ LAYER CONTROL INSTRUCTIONS (control_layers):
    - fire_stations: fire stations (blue points)
    - custom: analysis results from sandbox (purple polygons/points)
 
+MULTI-TURN CONVERSATION CONTEXT:
+When the user refers to previous results (e.g., "построй маршруты к тем пожарам", "проанализируй эти гари"),
+check the conversation history for context summaries marked with [Контекст: ...].
+These summaries contain key data like fire coordinates, route details, and other results from previous tool calls.
+Use these coordinates to perform follow-up actions without asking the user to repeat the request.
+
+Example:
+1. User: "найди пожары в Тульской области"
+2. Assistant calls search_fires and responds with text + "[Контекст: найдено 5 пожаров. Координаты первых 5: [37.6, 54.1], [37.8, 54.2], ...]"
+3. User: "построй маршруты от пожарных частей к этим пожарам"
+4. Assistant sees the context in history, extracts coordinates, and calls dispatch_routes_to_fires or build_routes_batch
+
+IMPORTANT: When user says "к этим пожарам", "к найденным пожарам", "от этих частей" — use the coordinates from [Контекст: ...] in the previous assistant message.
+
 Respond in the same language as the user's message."""
 
 
@@ -759,6 +773,12 @@ def handle_chat_message(message, bbox=None, history=None):
         f'[chat] done: {len(actions)} action(s): '
         + ', '.join(a['tool'] for a in actions)
     )
+
+    # Add context summary to response for multi-turn conversation support
+    # This ensures key data (coordinates, routes) is preserved in history
+    context_summary = _build_context_summary(actions, tool_results)
+    if context_summary and text:
+        text = text + '\n\n' + context_summary
 
     return {
         'response': text,
@@ -1317,3 +1337,68 @@ def _format_tool_results(actions):
             total = summary.get('total_valid', 0)
             parts.append(f'Статистика: {total} подтверждённых очагов.')
     return '\n'.join(parts) if parts else 'Данные получены.'
+
+
+def _build_context_summary(actions, tool_results):
+    """
+    Build a context summary from tool results to include in the assistant's response.
+    This ensures that key data (coordinates, route info) is preserved in conversation
+    history and available for follow-up questions.
+    """
+    if not actions:
+        return ''
+
+    context_parts = []
+
+    for action in actions:
+        tool = action['tool']
+        summary = action.get('result_summary', {})
+
+        if tool == 'search_fires':
+            # Include fire coordinates for follow-up routing/analysis
+            sample = summary.get('sample', [])
+            if sample:
+                coords = [f"[{f['lon']:.4f}, {f['lat']:.4f}]" for f in sample[:5]]
+                total = summary.get('total_fires', 0)
+                context_parts.append(
+                    f"[Контекст: найдено {total} пожаров. Координаты первых 5: {', '.join(coords)}]"
+                )
+
+        elif tool == 'dispatch_routes_to_fires':
+            # Include route details for follow-up questions
+            routes = summary.get('routes', [])
+            if routes:
+                route_info = []
+                for r in routes[:3]:
+                    station = r.get('station', [])
+                    fire = r.get('fire', [])
+                    if station and fire:
+                        route_info.append(
+                            f"от [{station[0]:.4f}, {station[1]:.4f}] к [{fire[0]:.4f}, {fire[1]:.4f}]"
+                        )
+                total_routes = summary.get('routes_built', 0)
+                context_parts.append(
+                    f"[Контекст: построено {total_routes} маршрутов. "
+                    f"Примеры: {'; '.join(route_info)}]"
+                )
+
+        elif tool == 'build_route':
+            # Include single route details
+            start = summary.get('start')
+            end = summary.get('end')
+            distance = summary.get('distance_km')
+            if start and end:
+                context_parts.append(
+                    f"[Контекст: маршрут от [{start[0]:.4f}, {start[1]:.4f}] "
+                    f"до [{end[0]:.4f}, {end[1]:.4f}], {distance:.1f} км]"
+                )
+
+        elif tool == 'build_routes_batch':
+            # Include batch route summary
+            total = summary.get('successful_routes', 0)
+            distance = summary.get('total_distance_km', 0)
+            context_parts.append(
+                f"[Контекст: построено {total} маршрутов, общая дистанция {distance:.1f} км]"
+            )
+
+    return '\n'.join(context_parts) if context_parts else ''
