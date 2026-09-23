@@ -40,6 +40,28 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = 'config.urls'
 
+# Logging: show INFO messages from geo_processing/fires modules in `docker compose logs backend`
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'simple': {
+            'format': '[{asctime}] {levelname} {name}: {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'simple',
+        },
+    },
+    'loggers': {
+        'geo_processing': {'level': 'INFO', 'handlers': ['console'], 'propagate': False},
+        'fires': {'level': 'INFO', 'handlers': ['console'], 'propagate': False},
+    },
+}
+
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
