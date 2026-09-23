@@ -499,6 +499,9 @@ def handle_chat_message(message, bbox=None):
             if func_name == 'execute_python' and not func_args.get('context') and tool_results:
                 func_args['context'] = tool_results
 
+            logger.info(
+                f'[chat] iteration={iteration} tool={func_name} args={json.dumps(func_args, ensure_ascii=False)}'
+            )
             result = execute_tool(func_name, func_args, bbox)
             actions.append({
                 'tool': func_name,
@@ -529,6 +532,11 @@ def handle_chat_message(message, bbox=None):
     else:
         # Превышен лимит итераций
         text = f"Превышен лимит итераций ({max_iterations}). Выполнено действий: {len(actions)}"
+
+    logger.info(
+        f'[chat] done: {len(actions)} action(s): '
+        + ', '.join(a['tool'] for a in actions)
+    )
 
     return {
         'response': text,
