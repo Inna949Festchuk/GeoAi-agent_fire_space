@@ -609,13 +609,48 @@ LAYER CONTROL INSTRUCTIONS (control_layers):
 Respond in the same language as the user's message."""
 
 
-def handle_chat_message(message, bbox=None):
+MAX_HISTORY_MESSAGES = 20
+
+
+def _build_messages(message, bbox=None, history=None):
+    """
+    Assemble the LLM message list: system prompt + conversation history + current user message.
+
+    History is a list of {'role': 'user'|'assistant', 'content': str} entries from previous turns.
+    Only the last MAX_HISTORY_MESSAGES valid entries are kept; system/error messages are skipped.
+    """
+    messages = [{'role': 'system', 'content': SYSTEM_PROMPT}]
+
+    if history:
+        kept = 0
+        for item in reversed(history):
+            if kept >= MAX_HISTORY_MESSAGES:
+                break
+            if not isinstance(item, dict):
+                continue
+            role = item.get('role')
+            content = item.get('content')
+            if role not in ('user', 'assistant') or not isinstance(content, str) or not content.strip():
+                continue
+            messages.insert(1, {'role': role, 'content': content})
+            kept += 1
+
+    user_content = message
+    if bbox:
+        user_content += f'\n\n[User is viewing area: bbox={bbox}]'
+    messages.append({'role': 'user', 'content': user_content})
+    return messages
+
+
+def handle_chat_message(message, bbox=None, history=None):
     """
     Process a chat message and return AI response with optional map data.
 
     Args:
         message: User message text
         bbox: Optional bounding box [minx, miny, maxx, maxy]
+        history: Optional list of prior conversation turns
+                 [{'role': 'user'|'assistant', 'content': str}, ...]
 
     Returns:
         Dict with keys:
@@ -629,14 +664,7 @@ def handle_chat_message(message, bbox=None):
         base_url=settings.LLM_API_BASE_URL,
     )
 
-    user_content = message
-    if bbox:
-        user_content += f'\n\n[User is viewing area: bbox={bbox}]'
-
-    messages = [
-        {'role': 'system', 'content': SYSTEM_PROMPT},
-        {'role': 'user', 'content': user_content},
-    ]
+    messages = _build_messages(message, bbox, history)
 
     actions = []
     map_data_list = []

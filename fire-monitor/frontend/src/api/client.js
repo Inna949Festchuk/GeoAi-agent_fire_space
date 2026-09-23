@@ -51,11 +51,11 @@ export async function fetchStats(params = {}) {
   return res.json()
 }
 
-export async function sendMessage(message, bbox = null) {
+export async function sendMessage(message, bbox = null, history = []) {
   const res = await fetch(`${API_BASE}/chat/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, bbox }),
+    body: JSON.stringify({ message, bbox, history }),
   })
   if (!res.ok) throw new Error(`Chat failed: ${res.status}`)
   return res.json()
