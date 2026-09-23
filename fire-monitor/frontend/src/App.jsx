@@ -163,15 +163,16 @@ function App() {
       mapDataList.forEach(item => {
         if (item.type === 'burn') {
           setBurnData(item.data)
-        } else if (item.type === 'custom') {
-          // Собираем все features из custom данных
+        } else if (item.type === 'fire') {
+          setFireData(item.data)
+        } else {
+          // custom / routes / fire_stations: MapView сам разделит features
+          // на слои маршрутов, станций и прочего по геометрии и properties.type
           if (item.data?.features) {
             allCustomFeatures.push(...item.data.features)
           } else if (item.data?.type === 'Feature') {
             allCustomFeatures.push(item.data)
           }
-        } else {
-          setFireData(item.data)
         }
       })
       
