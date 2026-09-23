@@ -16,9 +16,153 @@ from openai import OpenAI
 from .firms_client import fetch_active_fires
 from .fire_filter import filter_fire_hotspots, get_filter_summary
 from .stac_client import search_sentinel2
-from .routing import build_route, build_routes_batch, find_nearest_fire_stations
+from .routing import (
+    build_route, build_routes_batch, find_nearest_fire_stations,
+    haversine_distance,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _args_for_log(func_name, func_args):
+    """Сокращает аргументы для логов/действий: не зацикливает весь GeoJSON."""
+    if func_name == 'dispatch_routes_to_fires' and isinstance(func_args.get('fires_geojson'), dict):
+        args = dict(func_args)
+        gj = args['fires_geojson']
+        n = len(gj.get('features', [])) if isinstance(gj.get('features'), list) else 0
+        args['fires_geojson'] = f'<FeatureCollection: {n} features>'
+        return args
+    return func_args
+
+
+def _dispatch_routes_to_fires(args):
+    """
+    Автодиспетчеризация: группирует пожары в очаги, для каждого очага находит
+    ближайшую пожарную часть (Overpass) и строит маршрут по дорогам (OSRM).
+    Возвращает сводку с координатами (чтобы LLM видел их) и GeoJSON маршрутов+станций.
+    """
+    fires_gj = args.get('fires_geojson')
+    radius_km = args.get('radius_km') or 100
+    cluster_km = args.get('cluster_km') or 5
+    max_routes = args.get('max_routes') or 10
+
+    if not isinstance(fires_gj, dict):
+        return {'summary': {'error': (
+            'fires_geojson is required — call search_fires first '
+            '(the system injects its result automatically)'
+        )}}
+    fire_features = [
+        f for f in fires_gj.get('features', [])
+        if isinstance(f, dict) and isinstance(f.get('geometry'), dict)
+        and f['geometry'].get('type') == 'Point'
+        and isinstance(f['geometry'].get('coordinates'), list)
+        and len(f['geometry']['coordinates']) >= 2
+    ]
+    if not fire_features:
+        return {'summary': {'error': 'No fire points found in fires_geojson'}}
+
+    # 1. Кластеризация близких точек пожара в очаги (жадный алгоритм по haversine)
+    clusters = []  # [{'lon','lat','frp','count'}]
+    for feat in fire_features:
+        lon, lat = feat['geometry']['coordinates'][0], feat['geometry']['coordinates'][1]
+        frp = (feat.get('properties') or {}).get('frp') or 0
+        target = None
+        for c in clusters:
+            if haversine_distance(c['lat'], c['lon'], lat, lon) <= cluster_km:
+                target = c
+                break
+        if target is None:
+            clusters.append({'lon': lon, 'lat': lat, 'frp': float(frp), 'count': 1})
+        else:
+            n = target['count']
+            target['lon'] = (target['lon'] * n + lon) / (n + 1)
+            target['lat'] = (target['lat'] * n + lat) / (n + 1)
+            target['frp'] += float(frp)
+            target['count'] = n + 1
+
+    # 2. Сортировка очагов по мощности (FRP), ограничиваем число маршрутов
+    clusters.sort(key=lambda c: c['frp'], reverse=True)
+    clusters = clusters[:max_routes]
+
+    # 3. Для каждого очага — ближайшая часть + маршрут от неё к очагу
+    route_pairs = []
+    stations_used = []
+    skipped = []
+    for c in clusters:
+        st = find_nearest_fire_stations(
+            lat=c['lat'], lon=c['lon'], radius_km=radius_km, limit=1
+        )
+        if not st.get('success') or not st.get('stations'):
+            skipped.append({
+                'fire': [round(c['lon'], 5), round(c['lat'], 5)],
+                'reason': st.get('error', 'no stations found'),
+            })
+            continue
+        s = st['stations'][0]
+        route_pairs.append([[s['lon'], s['lat']], [c['lon'], c['lat']]])
+        stations_used.append(s)
+
+    if not route_pairs:
+        return {'summary': {
+            'error': f'No fire stations found within {radius_km} km of any fire cluster',
+            'fire_clusters': len(clusters),
+            'skipped': skipped[:5],
+        }}
+
+    routes_result = build_routes_batch(route_pairs)
+    if not routes_result.get('success'):
+        return {'summary': {'error': 'Failed to build routes via OSRM',
+                            'details': routes_result.get('errors')}}
+
+    # 4. Объединяем GeoJSON: маршруты + точки ближайших частей
+    features = list(routes_result['geojson'].get('features', []))
+    for i, s in enumerate(stations_used):
+        features.append({
+            'type': 'Feature',
+            'geometry': {'type': 'Point', 'coordinates': [s['lon'], s['lat']]},
+            'properties': {
+                'name': s.get('name') or f'Пожарная часть {i + 1}',
+                'address': s.get('address', ''),
+                'phone': s.get('phone', ''),
+                'distance_km': s.get('distance_km'),
+                'type': 'fire_station',
+            },
+        })
+    combined_geojson = {'type': 'FeatureCollection', 'features': features}
+
+    # 5. Сводка с КОРОТКИМИ координатами — она уходит обратно в LLM,
+    #    поэтому её можно безопасно использовать в следующих вызовах инструментов
+    routes_summary = []
+    for i, ((st_lon, st_lat), (f_lon, f_lat)) in enumerate(route_pairs):
+        routes_summary.append({
+            'route': i + 1,
+            'station': [round(st_lon, 5), round(st_lat, 5)],
+            'station_name': stations_used[i].get('name', ''),
+            'fire': [round(f_lon, 5), round(f_lat, 5)],
+        })
+
+    summary = {
+        'success': True,
+        'fire_clusters': len(clusters),
+        'routes_built': routes_result['successful_routes'],
+        'total_distance_km': routes_result['total_distance_km'],
+        'total_duration_min': routes_result['total_duration_min'],
+        'routes': routes_summary,
+        'message': (
+            f"Построено {routes_result['successful_routes']} маршрутов от ближайших "
+            f"пожарных частей до очагов пожаров (суммарно "
+            f"{routes_result['total_distance_km']} км, "
+            f"{routes_result['total_duration_min']} мин)."
+        ),
+    }
+    if skipped:
+        summary['skipped'] = skipped
+
+    return {
+        'summary': summary,
+        'geojson': combined_geojson,
+        'data_type': 'routes',
+    }
 
 TOOLS = [
     {
@@ -226,6 +370,34 @@ TOOLS = [
     {
         'type': 'function',
         'function': {
+            'name': 'dispatch_routes_to_fires',
+            'description': 'AUTO-DISPATCH: Build optimal driving routes (OSRM) from the nearest fire station to each fire hotspot in ONE call. USE THIS TOOL whenever the user asks to build routes from fire stations to fires (e.g. "построй оптимальный маршрут от пожарных частей к пожарам"). It automatically clusters fire points, finds the nearest station for each cluster via Overpass and builds all routes via OSRM — do NOT try to extract coordinates yourself or use execute_python for this task.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'fires_geojson': {
+                        'type': 'object',
+                        'description': 'GeoJSON FeatureCollection of fire points (the result of search_fires). OPTIONAL — if omitted, the result of the previous search_fires call is used automatically.',
+                    },
+                    'radius_km': {
+                        'type': 'integer',
+                        'description': 'Max radius to search for fire stations around each fire (default: 100)',
+                    },
+                    'cluster_km': {
+                        'type': 'number',
+                        'description': 'Distance threshold in km to merge nearby fire hotspots into one fire cluster (default: 5)',
+                    },
+                    'max_routes': {
+                        'type': 'integer',
+                        'description': 'Maximum number of routes to build (default: 10)',
+                    },
+                },
+            },
+        },
+    },
+    {
+        'type': 'function',
+        'function': {
             'name': 'find_nearest_fire_stations',
             'description': 'Find fire stations using OpenStreetMap (Overpass API). Can search around a point or in a bounding box. Returns GeoJSON with fire station locations and distances.',
             'parameters': {
@@ -394,6 +566,18 @@ You:
 2. For each fire, call find_nearest_fire_stations(lat=fire_lat, lon=fire_lon, limit=1)
 3. Display only the ONE nearest station for each fire
 
+User: "Find fires near a city AND build routes from fire stations to them" (ПОЛНЫЙ WORKFLOW):
+1. Call search_fires(bbox=[...]) — get fire hotspots
+2. Call dispatch_routes_to_fires() WITHOUT arguments — the system automatically injects
+   the previous search_fires GeoJSON; it clusters fires, finds the nearest station for
+   each cluster (Overpass) and builds driving routes (OSRM) in one step. Routes and
+   stations appear on the map. NEVER try to copy fire/station coordinates into
+   execute_python or extract them yourself — this always fails and wastes iterations!
+3. Summarize using the 'routes' list returned by dispatch_routes_to_fires
+   (it contains exact [lon, lat] of each station and fire).
+Alternative if you already have explicit station+fire coordinates:
+   build_routes_batch(route_pairs=[[[st_lon, st_lat], [fire_lon, fire_lat]], ...])
+
 IMPORTANT: Do NOT build routes unless user explicitly asks for routes!
 
 FIRE STATION INSTRUCTIONS (find_nearest_fire_stations):
@@ -499,13 +683,21 @@ def handle_chat_message(message, bbox=None):
             if func_name == 'execute_python' and not func_args.get('context') and tool_results:
                 func_args['context'] = tool_results
 
+            # dispatch_routes_to_fires: автоматически подставляем GeoJSON пожаров
+            # из предыдущего вызова search_fires (LLM не должен копировать данные сам)
+            if func_name == 'dispatch_routes_to_fires':
+                if not func_args.get('fires_geojson'):
+                    fires_gj = tool_results.get('search_fires')
+                    if isinstance(fires_gj, dict) and fires_gj.get('features'):
+                        func_args['fires_geojson'] = fires_gj
+
             logger.info(
-                f'[chat] iteration={iteration} tool={func_name} args={json.dumps(func_args, ensure_ascii=False)}'
+                f'[chat] iteration={iteration} tool={func_name} args={_args_for_log(func_name, func_args)}'
             )
             result = execute_tool(func_name, func_args, bbox)
             actions.append({
                 'tool': func_name,
-                'args': func_args,
+                'args': _args_for_log(func_name, func_args),
                 'result_summary': result.get('summary', ''),
             })
 
@@ -527,7 +719,9 @@ def handle_chat_message(message, bbox=None):
             messages.append({
                 'role': 'tool',
                 'tool_call_id': tool_call.id,
-                'content': json.dumps(result.get('summary', {}), ensure_ascii=False),
+                'content': json.dumps(
+                    result.get('summary', {}), ensure_ascii=False, default=str
+                ),
             })
     else:
         # Превышен лимит итераций
@@ -943,10 +1137,10 @@ def execute_tool(name, args, context_bbox=None):
                 "duration_min": result['duration_min'],
                 "success": True
             },
-            "map_data": {
-                "type": "custom",
-                "data": result['geojson']
-            }
+            # ВАЖНО: ключ geojson — цикл handle_chat_message кладёт такой результат
+            # в tool_results, чтобы LLM видел координаты маршрута в контексте
+            "geojson": result['geojson'],
+            "data_type": "routes",
         }
 
     elif name == 'build_routes_batch':
@@ -969,10 +1163,8 @@ def execute_tool(name, args, context_bbox=None):
                 "total_duration_min": result['total_duration_min'],
                 "success": True
             },
-            "map_data": {
-                "type": "custom",
-                "data": result['geojson']
-            }
+            "geojson": result['geojson'],
+            "data_type": "routes",
         }
 
     elif name == 'find_nearest_fire_stations':
@@ -1003,11 +1195,14 @@ def execute_tool(name, args, context_bbox=None):
 
         return {
             "summary": summary,
-            "map_data": {
-                "type": "custom",
-                "data": result['geojson']
-            }
+            # Ключ geojson: результат попадёт в tool_results и LLM увидит
+            # координаты станций ([lon, lat]) для построения маршрутов
+            "geojson": result['geojson'],
+            "data_type": "fire_stations",
         }
+
+    elif name == 'dispatch_routes_to_fires':
+        return _dispatch_routes_to_fires(args)
 
     elif name == 'control_layers':
         action_type = args.get('action')
