@@ -185,8 +185,13 @@ def chat_view(request):
 
     message = serializer.validated_data['message']
     bbox = serializer.validated_data.get('bbox')
+    history = serializer.validated_data.get('history') or []
 
-    result = handle_chat_message(message, bbox)
+    result = handle_chat_message(
+        message,
+        bbox,
+        history=[{'role': h['role'], 'content': h['content']} for h in history],
+    )
 
     return Response(result)
 

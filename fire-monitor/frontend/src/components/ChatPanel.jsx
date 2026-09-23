@@ -27,7 +27,13 @@ function ChatPanel({ bbox, onResponse, onLayerAction }) {
     setLoading(true)
 
     try {
-      const result = await sendMessage(text, bbox)
+      // История разговора для multi-turn контекста: только реплики user/assistant
+      // (без системного приветствия и текущего сообщения), до 20 последних
+      const historyForRequest = messages
+        .filter((m) => (m.role === 'user' || m.role === 'assistant') && m.content?.trim())
+        .slice(-20)
+        .map((m) => ({ role: m.role, content: m.content }))
+      const result = await sendMessage(text, bbox, historyForRequest)
 
       setMessages((prev) => [
         ...prev,

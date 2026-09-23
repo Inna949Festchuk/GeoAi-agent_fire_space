@@ -35,6 +35,11 @@ class ProcessingJobSerializer(serializers.ModelSerializer):
         ]
 
 
+class ChatHistoryMessageSerializer(serializers.Serializer):
+    role = serializers.ChoiceField(choices=['user', 'assistant'])
+    content = serializers.CharField(max_length=8000)
+
+
 class ChatMessageSerializer(serializers.Serializer):
     message = serializers.CharField(max_length=4000)
     bbox = serializers.ListField(
@@ -43,6 +48,12 @@ class ChatMessageSerializer(serializers.Serializer):
         min_length=4,
         max_length=4,
         help_text='Optional bounding box [minx, miny, maxx, maxy]'
+    )
+    history = ChatHistoryMessageSerializer(
+        many=True,
+        required=False,
+        allow_empty=True,
+        help_text='Optional prior conversation turns for multi-turn context'
     )
 
 
