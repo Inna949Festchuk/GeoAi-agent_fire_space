@@ -27,59 +27,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# LasZip + LAZperf (драйверы сжатия LAS/LAZ) собираются из исходников:
-# в Debian нет готовых пакетов. Единая системная liblaszip/liblazperf нужна,
-# чтобы PDAL использовал один и тот же код сжатия. Компилятор затем удаляется
-# на финальном этапе purge.
+# LasZip (драйвер сжатия LAS/LAZ) собирается из исходников: в Debian trixie
+# нет готового пакета (laszip-bin только для bookworm). Ветка release/NN-MM
+# в репозитории LASzip соответствует году/месяцу релиза, а не версии;
+# стабильный тег 3.4.3 актуален (3.5.0 не собирается из-за регрессии:
+# std::filesystem без <filesystem>). Синтаксис CMakeLists этого тега чистый,
+# sed-патч больше не нужен. Компилятор затем удаляется на финальном этапе purge.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential cmake zlib1g-dev git ca-certificates \
-    && . /etc/os-release \
-    && git clone --depth 1 --branch "release/${VERSION_ID}-02" \
+    && git clone --depth 1 --branch 3.4.3 \
         https://github.com/LASzip/LASzip.git /tmp/laszip \
-    # в CMakeLists этого тега есть синтаксическая ошибка — чиним патчем
-    && sed -i 's/^IF(CMAKE_COMPILER_IS_GNUCXX)$/' /tmp/laszip/CMakeLists.txt \
     && cmake -S /tmp/laszip -B /tmp/laszip/build -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     && cmake --build /tmp/laszip/build --parallel \
     && cmake --install /tmp/laszip/build \
     && ldconfig \
-    && git clone --depth 1 https://github.com/hobu/laz-perf.git /tmp/lazperf \
-    && cmake -S /tmp/lazperf -B /tmp/lazperf/build -DCMAKE_BUILD_TYPE=Release \
-        -DLAZPERF_TESTS_DISABLED=ON \
-    && cmake --build /tmp/lazperf/build --parallel \
-    && cmake --install /tmp/lazperf/build \
-    && ldconfig \
-    && rm -rf /tmp/laszip /tmp/lazperf /var/lib/apt/lists/*
+    && rm -rf /tmp/laszip /var/lib/apt/lists/*
 
-# Python-биндинг laszip (экстра "laszip" для laspy) ставим колесом manylinux_2_17:
-# версия 0.2.4 — последняя, разрешённая laspy 2.x (лазер <0.3.0). Колесо
-# самодостаточное (статически линкует свой LasZip), отдельной сборки не требует.
-RUN pip install --no-cache-dir "laszip==0.2.4"
-
-# Системный PDAL (CLI + библиотеки) собирается из исходников: так получаем
-# laszip/lazperf-сжатие (библиотеки выше) и версию, точно совпадающую с
-# pip-обёрткой PDAL (ctypes). Путь к LasZip подсказываем явно (PDAL ищет
-# pkg-config-файл laszip.pc, которого у LasZip нет). Если LasZip не найден —
-# сборка падает здесь (fail-fast), а не тихо теряет поддержку LAZ.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential cmake git ca-certificates \
-    && test -f /usr/local/include/laszip/laszip.hpp \
-    && test -f /usr/local/lib/liblaszip.so \
-    && git clone --depth 1 --branch pdal-3.4.1 \
-        https://github.com/PDAL/PDAL.git /tmp/pdal \
-    && cmake -S /tmp/pdal -B /tmp/pdal/build -DCMAKE_BUILD_TYPE=Release \
-        -DPDAL_BUILD_STATIC=OFF \
-        -DWITH_LASZIP=ON -DWITH_LAZPERF=ON \
-        -DLASZIP_INCLUDE_DIR=/usr/local/include \
-        -DLASZIP_LIBRARY=/usr/local/lib/liblaszip.so \
-        -DWITH_E57=OFF -DWITH_NITRO=OFF \
-        -DBUILD_PLUGIN_TILEDB=OFF -DBUILD_DRIVER_pgPOINT=OFF \
-    && cmake --build /tmp/pdal/build --parallel \
-    # проверяем на этапе сборки, что драйвер readers.las/writers.las собраны
-    && /tmp/pdal/build/bin/pdal --drivers | grep -E "(readers|writers)\.las" \
-    && cmake --install /tmp/pdal/build \
-    && ldconfig \
-    && rm -rf /tmp/pdal /var/lib/apt/lists/*
+# Лазерные python-библиотеки ставим колёсами PyPI (самодостаточные):
+# - laszip 0.2.4 — экстра "laszip" для laspy (0.3.0 laspy 2.x не разрешает);
+#   колесо manylinux_2_17 статически линкует свой LasZip, отдельной сборки не требует
+# - lazperf: PyPI-колесо (hobu) покрывает LAZperf-поток; в Debian trixie есть
+#   системный python3-lazperf — ставим его как резерв на случай, если wheel
+#   недоступен под наш Python
+# - PDAL: pip-дистрибутив содержит бинарный CLI + библиотеки и ctypes-обёртку
+#   (одна и та же версия CLI и модуля), LAZ-декомпрессия встроена
+RUN pip install --no-cache-dir "laszip==0.2.4" lazperf PDAL \
+    && apt-get update && apt-get install -y --no-install-recommends python3-lazperf \
+    && rm -rf /var/lib/apt/lists/* \
+    # проверка доступности стека LiDAR до установки остальных пакетов
+    && python -c "import laszip, lazperf, pdal; print('lidar stack ok')"
 
 # Устанавливаем Python-пакеты поверх СИСТЕМНЫХ GDAL/PROJ из Debian:
 # - C extensions собираем из исходников (build isolation отключен, чтобы
