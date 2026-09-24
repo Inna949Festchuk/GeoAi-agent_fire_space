@@ -336,7 +336,7 @@ TOOLS = [
         'type': 'function',
         'function': {
             'name': 'execute_python',
-            'description': 'Execute custom Python code for geospatial analysis. Runs in ultra-hardened sandbox with numpy (np), pandas (pd), geopandas (gpd), shapely (shape, mapping, unary_union) pre-imported. NO import statements needed. To display results on map, assign GeoJSON to __result__. Use print() for text output.',
+            'description': 'Execute custom Python code for geospatial analysis. Runs in ultra-hardened sandbox with numpy (np), pandas (pd), geopandas (gpd), shapely, pyproj (CRS, Transformer, Geod), rasterio + GDAL/osgeo (gdal, ogr, osr), xarray/rioxarray (xr) pre-imported. NO import statements needed. To display results on map, assign GeoJSON to __result__. Use print() for text output.',
             'parameters': {
                 'type': 'object',
                 'properties': {
@@ -540,15 +540,21 @@ SANDBOX INSTRUCTIONS (execute_python):
 2. Available libraries (ALREADY IMPORTED, DO NOT use 'import' or 'from ... import'):
    - numpy (as np)
    - pandas (as pd)
-   - geopandas (as gpd)
-   - shapely.geometry: Point, LineString, Polygon, MultiPoint, MultiLineString, MultiPolygon, shape, mapping, box
-   - shapely.ops: unary_union, transform
-   - shapely: wkt
-3. CRITICAL: DO NOT write 'import' or 'from ... import' statements — all libraries are pre-imported!
-4. NO network access is allowed. You cannot use requests, httpx, or fetch URLs.
-5. To pass data from previous tools, use the context parameter (max 10MB).
-6. To display results on map, assign GeoJSON to __result__ variable.
-7. Available builtins: round, abs, min, max, sum, sorted, enumerate, zip, map, filter, len, int, float, str, list, dict, tuple, set, print, and all standard exceptions.
+   - geopandas (as gpd) — read_file, sjoin, overlay, to_crs and other vector ops
+   - shapely.geometry: Point, LineString, Polygon, MultiPoint, MultiLineString, MultiPolygon, LinearRing, GeometryCollection, shape, mapping, box
+   - shapely.ops: unary_union, transform, split, nearest_points
+   - shapely: wkt, wkb
+   - pyproj: CRS, Transformer, Geod, Proj — coordinate transformations and geodesic distances
+   - rasterio (raster_open alias for rasterio.open), Resampling, geometry_mask, geometry_windows, rasterize, calculate_default_crs, transform_bounds
+   - GDAL Python bindings: gdal, ogr, osr (from osgeo) — any GDAL-supported format (GeoTIFF, COG, Shapefile, GeoJSON, GPKG, KML, NetCDF, HDF5, JPEG2000...)
+   - xarray (as xr) + rioxarray — labeled n-D arrays, raster clipping/warping/reprojection
+   - mercantile — tile math (XYZ tiles, bbox -> tiles)
+3. Projection tips: reproject vectors with gdf.to_crs("EPSG:3857") or Transformer.from_crs(CRS.from_epsg(4326), CRS.from_epsg(3857), always_xy=True). Use Geod(ellps="WGS84").geometry_area_perimeter() for accurate areas in m2 instead of degree-based .area/.buffer. For buffers in meters, first reproject to an equal-area/local CRS (e.g. UTM zone via CRS.from_epsg).
+4. CRITICAL: DO NOT write 'import' or 'from ... import' statements — all libraries are pre-imported!
+5. NO network access is allowed. You cannot use requests, httpx, or fetch URLs. Remote rasters (/vsicurl/, https://) are unavailable; work with data passed via context.
+6. To pass data from previous tools, use the context parameter (max 10MB).
+7. To display results on map, assign GeoJSON to __result__ variable (must be WGS84 / EPSG:4326).
+8. Available builtins: round, abs, min, max, sum, sorted, enumerate, zip, map, filter, len, int, float, str, list, dict, tuple, set, print, and all standard exceptions.
 
 MULTI-STEP WORKFLOWS:
 When user asks to "find fires AND filter/buffer/analyze them":
