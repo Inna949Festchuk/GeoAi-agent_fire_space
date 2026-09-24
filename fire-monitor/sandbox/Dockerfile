@@ -43,19 +43,38 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && ldconfig \
     && rm -rf /tmp/laszip /var/lib/apt/lists/*
 
-# Лазерные python-библиотеки ставим колёсами PyPI (самодостаточные):
+# Лазерные python-библиотеки:
 # - laszip 0.2.4 — экстра "laszip" для laspy (0.3.0 laspy 2.x не разрешает);
-#   колесо manylinux_2_17 статически линкует свой LasZip, отдельной сборки не требует
-# - lazperf: PyPI-колесо (hobu) покрывает LAZperf-поток; в Debian trixie есть
-#   системный python3-lazperf — ставим его как резерв на случай, если wheel
-#   недоступен под наш Python
-# - PDAL: pip-дистрибутив содержит бинарный CLI + библиотеки и ctypes-обёртку
-#   (одна и та же версия CLI и модуля), LAZ-декомпрессия встроена
-RUN pip install --no-cache-dir "laszip==0.2.4" lazperf PDAL \
-    && apt-get update && apt-get install -y --no-install-recommends python3-lazperf \
-    && rm -rf /var/lib/apt/lists/* \
-    # проверка доступности стека LiDAR до установки остальных пакетов
-    && python -c "import laszip, lazperf, pdal; print('lidar stack ok')"
+#   колесо manylinux_2_17 cp312 статически линкует свой LasZip, ставится с PyPI
+#   без компиляции.
+# - lazperf: на PyPI выложен только sdist lazperf-1.5 — готовых колёс под
+#   cp312 нет, а sdist нерабочий: setup.py читает python/README.rst и
+#   python/CHANGES.rst, которых нет в архиве (ошибка сборки
+#   "FileNotFoundError: python/README.rst"). Системного python3-lazperf в
+#   Debian trixie тоже нет. Поэтому ставим lazrs — поддерживаемый
+#   LAZ-декодер laspy (экстра "lazrs", самодостаточное manylinux-колесо):
+#   pip install "laspy[lazrs]==2.5.4" ниже.
+# - PDAL: pip-дистрибутив НЕ содержит бинарного CLI — это pybind11-расширение,
+#   которое собирается из исходников против установленной libpdal
+#   (scikit-build-core + find_package(PDAL)). Ставится блоком geo-пакетов
+#   вместе с GDAL==$(gdal-config --version).
+RUN pip install --no-cache-dir "laszip==0.2.4" \
+    && python -c "import laszip; print('laszip ok')"
+
+# Компилируем PDAL 3.5.4 из исходников: даёт и бинарник pdal (CLI), и CMake
+#-конфигурацию libpdal-python, необходимые для сборки pip-модуля pdal.
+# Пул временных файлов (build-essential/cmake/git) — в следующем RUN-блоке.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential cmake git ca-certificates \
+        libpdal-dev pdal \
+    && git clone --depth 1 --branch 3.5.4 \
+        https://github.com/PDAL/python.git /tmp/pdal-python \
+    && cmake -S /tmp/pdal-python -B /tmp/pdal-python/build -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build /tmp/pdal-python/build --parallel \
+    && cmake --install /tmp/pdal-python/build \
+    && ldconfig \
+    && rm -rf /tmp/pdal-python /var/lib/apt/lists/* \
+    && pdal --version
 
 # Устанавливаем Python-пакеты поверх СИСТЕМНЫХ GDAL/PROJ из Debian:
 # - C extensions собираем из исходников (build isolation отключен, чтобы
