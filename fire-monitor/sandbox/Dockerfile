@@ -15,7 +15,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libnetcdf-dev \
     libhdf5-dev \
     libspatialindex-dev \
-    libhdfs3 \
     libgeotiff-dev \
     libjson-c-dev \
     libxml2-dev \

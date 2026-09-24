@@ -531,6 +531,11 @@ docker compose exec backend python manage.py update_industrial_zones --bbox 80,5
 
 ## Обновления и дополнения
 
+### v0.0.13 (2026-09-25) — Исправление сборки образа sandbox (E: Unable to locate package libhdfs3)
+- 🐛 **apt-этап `sandbox 2/10` падал** с ошибкой `Unable to locate package libhdfs3`: пакета `libhdfs3` нет в репозиториях Debian trixie (образ `python:3.12-slim`) — он распространялся только через сторонний репозиторий OneFS/Hortonworks и был удалён из Debian ещё в Buster
+- ✅ Пакет **`libhdfs3` удалён из Dockerfile**: доступ к HDFS песочнице не нужен (read-only sandbox без сети), а GDAL при сборке просто не включает драйвер HDFS — на остальной гео-стек это не влияет
+- ℹ️ Сборка `docker compose build sandbox` теперь проходит на этапе установки системных зависимостей без ошибок
+
 ### v0.0.12 (2026-09-25) — Полный гео-стек в песочнице: GDAL/PROJ, растровая наука, графики, LiDAR
 - ✅ **GDAL + PROJ системно** в образе sandbox: все растровые/векторные форматы (GeoTIFF, COG, JPEG2000, NetCDF, HDF5, Shapefile, GPKG, KML…), виртуальные ФС `/vsimem/`, `/vsizip/`, сетки трансформаций `proj-data` офлайн (`PROJ_NETWORK=OFF`)
 - ✅ **Python-библиотеки предимпортированы** в безопасные globals executor'а (код агента пишется без `import`): `gdal/ogr/osr`, `rasterio` (+`geometry_mask`, `rasterize`, `Resampling`), `pyogrio`, `xarray/rioxarray`, `netCDF4/h5py/h5netcdf`, `pyproj (CRS/Transformer/Geod/Proj)`, `scipy.ndimage/stats/signal`, `skimage.measure/morphology/filters`, `laspy/pdal`, `mercantile`, `geopy`
