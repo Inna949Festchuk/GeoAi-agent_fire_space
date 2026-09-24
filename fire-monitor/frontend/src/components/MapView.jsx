@@ -9,6 +9,10 @@ function MapView({
   const mapRef = useRef(null)
   const mapContainerRef = useRef(null)
   const moveTimeoutRef = useRef(null)
+  // HTML-оверлеи (marker'ы) для текстовых подписей пользовательских точек —
+  // гарантированно рендерят кириллицу (в отличие от symbol-слоёв, которым
+  // нужен глиф-шрифт, отсутствующий в растровом OSM-стиле)
+  const labelMarkersRef = useRef([])
 
   // Разделяем customData на категории
   const { routesData, fireStationsData, otherCustomData } = useMemo(() => {
@@ -84,10 +88,40 @@ function MapView({
     mapRef.current = map
 
     return () => {
+      labelMarkersRef.current.forEach(m => m.remove())
+      labelMarkersRef.current = []
       map.remove()
       mapRef.current = null
     }
   }, [])
+
+  // Вспомогательные функции для попапов пользовательских точек/подписей
+  const escapeHtml = (s) => String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+
+  const popupContentFromProps = (props) => {
+    if (!props) return ''
+    if (props.popup) return props.popup // LLM может задать готовый HTML в properties.popup
+    let content = `<strong>${escapeHtml(props.name || props.label || props.title || 'Точка')}</strong>`
+    if (props.label && props.label !== props.name) {
+      content += `<div class="popup-row">${escapeHtml(props.label)}</div>`
+    }
+    if (props.description) {
+      content += `<div class="popup-row"><span class="popup-label">Описание:</span> <span class="popup-value">${escapeHtml(props.description)}</span></div>`
+    }
+    if (props.coordinates_text) {
+      content += `<div class="popup-row"><span class="popup-label">Координаты:</span> <span class="popup-value">${escapeHtml(props.coordinates_text)}</span></div>`
+    }
+    return content
+  }
+
+  const showCustomPopup = (map, coords, props) => {
+    new maplibregl.Popup({ className: 'map-popup-container', closeButton: false })
+      .setLngLat(coords)
+      .setHTML(`<div class="map-popup">${popupContentFromProps(props)}</div>`)
+      .addTo(map)
+  }
 
   // Update fire layer
   useEffect(() => {
@@ -383,6 +417,9 @@ function MapView({
     if (map.getLayer('custom-point-layer')) map.removeLayer('custom-point-layer')
     if (map.getSource('custom-polygon-data')) map.removeSource('custom-polygon-data')
     if (map.getSource('custom-point-data')) map.removeSource('custom-point-data')
+    // Удаляем старые HTML-подписи
+    labelMarkersRef.current.forEach(m => m.remove())
+    labelMarkersRef.current = []
 
     if (!showCustom || !otherCustomData?.features?.length) return
 
@@ -425,28 +462,49 @@ function MapView({
         },
       })
 
-      // Добавляем текстовые подписи для точек с properties.label
-      const hasLabels = points.some(p => p.properties?.label)
-      if (hasLabels) {
-        map.addLayer({
-          id: 'custom-point-labels',
-          type: 'symbol',
-          source: 'custom-point-data',
-          filter: ['has', 'label'],
-          layout: {
-            'text-field': ['get', 'label'],
-            'text-size': 12,
-            'text-offset': [0, 1.5],
-            'text-anchor': 'top',
-            'text-allow-overlap': true,
-          },
-          paint: {
-            'text-color': '#fff',
-            'text-halo-color': '#000',
-            'text-halo-width': 1.5,
-          },
+      // Попап по клику на маркер — берём properties.popup, иначе name/label/description
+      map.on('click', 'custom-point-layer', (e) => {
+        const feat = e.features && e.features[0]
+        if (!feat) return
+        showCustomPopup(map, feat.geometry.coordinates, feat.properties)
+      })
+      map.on('mouseenter', 'custom-point-layer', () => { map.getCanvas().style.cursor = 'pointer' })
+      map.on('mouseleave', 'custom-point-layer', () => { map.getCanvas().style.cursor = '' })
+
+      // Текстовые подписи точек с properties.label — через HTML-оверлеи
+      // (maplibregl.Marker), т.к. растровый OSM-стиль не содержит глиф-шрифта
+      // с кириллицей и symbol-слой молча не рендерит русские надписи.
+      points.forEach((p) => {
+        const label = p.properties?.label
+        if (!label || p.geometry?.type !== 'Point') return
+        const el = document.createElement('div')
+        el.textContent = String(label).replace(/\n/g, ' ')
+        el.style.cssText = [
+          'background: rgba(0,0,0,0.75)',
+          'color: #fff',
+          'padding: 2px 6px',
+          'border-radius: 4px',
+          'font-size: 12px',
+          'font-weight: 600',
+          'white-space: nowrap',
+          'border: 1px solid rgba(255,255,255,0.4)',
+          'cursor: pointer',
+          'text-align: center',
+          'line-height: 1.3',
+        ].join(';')
+        el.addEventListener('click', (ev) => {
+          ev.stopPropagation()
+          showCustomPopup(map, p.geometry.coordinates, p.properties)
         })
-      }
+        const marker = new maplibregl.Marker({
+          element: el,
+          anchor: 'top',
+          offset: [0, 10],
+        })
+          .setLngLat(p.geometry.coordinates)
+          .addTo(map)
+        labelMarkersRef.current.push(marker)
+      })
     }
   }, [otherCustomData, showCustom])
 

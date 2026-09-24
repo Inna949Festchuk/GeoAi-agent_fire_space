@@ -7,6 +7,7 @@ to determine which fire monitoring tools to invoke.
 
 import json
 import logging
+import time
 from datetime import datetime, timedelta
 from pyproj import Transformer
 from shapely.ops import transform as shapely_transform
@@ -17,11 +18,45 @@ from .firms_client import fetch_active_fires
 from .fire_filter import filter_fire_hotspots, get_filter_summary
 from .stac_client import search_sentinel2
 from .routing import (
-    build_route, build_routes_batch, find_nearest_fire_stations,
-    haversine_distance,
+    build_route, build_route_cached, build_routes_batch, find_nearest_fire_stations,
+    haversine_distance, add_route_length_labels, geojson_line_length_km,
 )
 
 logger = logging.getLogger(__name__)
+
+
+TOOL_RESULT_TTL_SEC = 3600  # результаты инструментов доступны для инъекций 1 час
+
+# Общие данные последних вызовов между итерациями одного запроса (и между
+# запросами в рамках TTL) — чтобы LLM не копировал GeoJSON/координаты вручную:
+#   {'search_fires': gj, 'routes_geojson': gj, 'fires_geojson': gj}
+_last_tool_data: dict = {}
+_last_tool_data_ts: float = 0.0
+
+
+def _remember_tool_data(func_name, result):
+    """Кеширует geojson/map_data результата инструмента для авто-инъекций."""
+    global _last_tool_data, _last_tool_data_ts
+    gj = result.get('geojson') or (result.get('map_data') or {}).get('data')
+    if not isinstance(gj, dict):
+        return
+    _last_tool_data[func_name] = gj
+    if func_name == 'search_fires':
+        _last_tool_data['fires_geojson'] = gj
+    if func_name in ('dispatch_routes_to_fires', 'build_routes_batch', 'build_route'):
+        _last_tool_data['routes_geojson'] = gj
+    _last_tool_data_ts = time.time()
+
+
+def _recall_tool_data(*keys):
+    """Возвращает закешированный GeoJSON по первому найденному ключу (или None)."""
+    if time.time() - _last_tool_data_ts > TOOL_RESULT_TTL_SEC:
+        return None
+    for k in keys:
+        gj = _last_tool_data.get(k)
+        if isinstance(gj, dict) and gj.get('features'):
+            return gj
+    return None
 
 
 def _args_for_log(func_name, func_args):
@@ -398,6 +433,22 @@ TOOLS = [
     {
         'type': 'function',
         'function': {
+            'name': 'label_route_lengths',
+            'description': 'Add length labels (км) on the map for previously built routes — in ONE fast call. USE THIS TOOL whenever the user asks to label/annotate route lengths or distances on the map (e.g. "подпиши длину маршрутов"). It reuses routes already built by dispatch_routes_to_fires / build_routes_batch (the result is injected automatically) and instantly places a text label at the midpoint of each route. NEVER use execute_python for this task — recomputing geometry there is slow and error-prone.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'routes_geojson': {
+                        'type': 'object',
+                        'description': 'GeoJSON FeatureCollection with route LineStrings. OPTIONAL — if omitted, the GeoJSON from the previous routing call (dispatch_routes_to_fires / build_routes_batch / build_route) is used automatically.',
+                    },
+                },
+            },
+        },
+    },
+    {
+        'type': 'function',
+        'function': {
             'name': 'find_nearest_fire_stations',
             'description': 'Find fire stations using OpenStreetMap (Overpass API). Can search around a point or in a bounding box. Returns GeoJSON with fire station locations and distances.',
             'parameters': {
@@ -578,6 +629,24 @@ User: "Find fires near a city AND build routes from fire stations to them" (ПО
 Alternative if you already have explicit station+fire coordinates:
    build_routes_batch(route_pairs=[[[st_lon, st_lat], [fire_lon, fire_lat]], ...])
 
+ROUTE LENGTH LABELS (label_route_lengths) — CRITICAL:
+When the user asks to label/annotate route lengths ("подпиши длину маршрутов",
+"покажи расстояние на маршрутах"):
+1. Call label_route_lengths() WITHOUT arguments — the system automatically injects
+   the GeoJSON of routes built earlier in this conversation. Labels appear at the
+   midpoint of each route instantly.
+2. NEVER use execute_python for this task and NEVER recompute routes there — it is
+   extremely slow, requires copying coordinates by hand and often produces nothing.
+3. If routes were built in a PREVIOUS turn (you only see them in [Контекст: ...]),
+   call dispatch_routes_to_fires or build_routes_batch again first (results are cached,
+   so it returns fast), then call label_route_lengths().
+
+POPUPS AND LABELS ON MARKERS:
+- Popup text on click goes into properties.popup (HTML allowed, e.g. "<b>Сочи</b><br>43.58° с.ш.").
+- Permanent map labels go into properties.label (plain text; '\n' makes multi-line labels).
+- Markers returned from execute_python MUST be Point features inside a FeatureCollection
+  assigned to __result__ — otherwise nothing appears on the map.
+
 IMPORTANT: Do NOT build routes unless user explicitly asks for routes!
 
 FIRE STATION INSTRUCTIONS (find_nearest_fire_stations):
@@ -676,6 +745,8 @@ def handle_chat_message(message, bbox=None, history=None):
     client = OpenAI(
         api_key=settings.LLM_API_KEY,
         base_url=settings.LLM_API_BASE_URL,
+        timeout=float(getattr(settings, 'LLM_REQUEST_TIMEOUT', 90)),
+        max_retries=1,
     )
 
     messages = _build_messages(message, bbox, history)
@@ -729,14 +800,28 @@ def handle_chat_message(message, bbox=None, history=None):
             # из предыдущего вызова search_fires (LLM не должен копировать данные сам)
             if func_name == 'dispatch_routes_to_fires':
                 if not func_args.get('fires_geojson'):
-                    fires_gj = tool_results.get('search_fires')
+                    fires_gj = tool_results.get('search_fires') or _recall_tool_data(
+                        'fires_geojson', 'search_fires')
                     if isinstance(fires_gj, dict) and fires_gj.get('features'):
                         func_args['fires_geojson'] = fires_gj
+
+            # label_route_lengths: автоматически подставляем GeoJSON ранее
+            # построенных маршрутов (LLM не должен копировать геометрию вручную)
+            if func_name == 'label_route_lengths' and not func_args.get('routes_geojson'):
+                routes_gj = tool_results.get('dispatch_routes_to_fires') \
+                    or tool_results.get('build_routes_batch') \
+                    or tool_results.get('build_route') \
+                    or _recall_tool_data(
+                        'routes_geojson', 'dispatch_routes_to_fires',
+                        'build_routes_batch', 'build_route')
+                if isinstance(routes_gj, dict) and routes_gj.get('features'):
+                    func_args['routes_geojson'] = routes_gj
 
             logger.info(
                 f'[chat] iteration={iteration} tool={func_name} args={_args_for_log(func_name, func_args)}'
             )
             result = execute_tool(func_name, func_args, bbox)
+            _remember_tool_data(func_name, result)
             actions.append({
                 'tool': func_name,
                 'args': _args_for_log(func_name, func_args),
@@ -1252,6 +1337,48 @@ def execute_tool(name, args, context_bbox=None):
 
     elif name == 'dispatch_routes_to_fires':
         return _dispatch_routes_to_fires(args)
+
+    elif name == 'label_route_lengths':
+        import copy as _copy
+
+        gj = args.get('routes_geojson')
+        if not isinstance(gj, dict) or not gj.get('features'):
+            gj = _recall_tool_data(
+                'routes_geojson', 'dispatch_routes_to_fires',
+                'build_routes_batch', 'build_route',
+            )
+        if not isinstance(gj, dict) or not gj.get('features'):
+            return {'summary': {'error': (
+                'No routes found. Build routes first with '
+                'dispatch_routes_to_fires (or build_routes_batch), '
+                'then call label_route_lengths again.'
+            )}}
+
+        labeled = add_route_length_labels(_copy.deepcopy(gj))
+        labels_added = sum(
+            1 for f in labeled.get('features', [])
+            if isinstance(f, dict)
+            and (f.get('properties') or {}).get('type') == 'route_label'
+        )
+        lines = sum(
+            1 for f in labeled.get('features', [])
+            if isinstance(f, dict)
+            and (f.get('geometry') or {}).get('type') == 'LineString'
+        )
+        summary = {
+            'success': True,
+            'labels_added': labels_added,
+            'routes_found': lines,
+            'message': (
+                f'Длины подписаны на карте: {labels_added} шт. для {lines} '
+                'маршрутов (подписи стоят посередине каждого маршрута).'
+            ),
+        }
+        return {
+            'summary': summary,
+            'geojson': labeled,
+            'data_type': 'routes',
+        }
 
     elif name == 'control_layers':
         action_type = args.get('action')
