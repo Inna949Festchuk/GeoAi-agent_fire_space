@@ -146,8 +146,10 @@ space/
 │  Sandbox (FastAPI + изолированный Docker)                       │
 │  • Безопасное выполнение Python кода                            │
 │  • AST-фильтрация (запрет os, subprocess, eval)                 │
-│  • Лимиты: CPU, RAM (512MB), время (30s)                        │
-│  • Библиотеки: numpy, pandas, geopandas, shapely                │
+│  • Лимиты: CPU, RAM (1.5 GB), время (30s)                       │
+│  • Гео-стек: GDAL/OGR, rasterio, pyogrio, xarray/rioxarray,     │
+│    scipy.ndimage, scikit-image, matplotlib, PDAL/laspy, pyproj  │
+│  • Вывод: GeoJSON (__result__) + графики PNG (__charts__)       │
 │  • network_mode: none (без доступа к сети)                      │
 ├─────────────────────────────────────────────────────────────────┤
 │  PostgreSQL 16 + PostGIS 3.4                                    │
@@ -179,7 +181,7 @@ MCP URL: http://localhost:8001/mcp
 - `find_nearest_fire_stations_mcp(lat, lon, radius_km)` — поиск ближайших пожарных частей через Overpass API
 
 ### Выполнение кода
-- `execute_python_mcp(code, context)` — выполнение Python кода в изолированной песочнице (numpy, pandas, geopandas, shapely)
+- `execute_python_mcp(code, context)` — выполнение Python кода в изолированной песочнице с полным гео-стеком: GDAL/OGR, rasterio, pyogrio, xarray/rioxarray, scipy.ndimage, scikit-image, matplotlib, PDAL/laspy, pyproj (подробности — раздел «🌍 Гео-стек песочницы» ниже)
 
 ## 💬 Использование через AI Чат
 
@@ -498,8 +500,8 @@ docker compose exec backend python manage.py update_industrial_zones --bbox 80,5
 - **Sandbox для выполнения Python кода:**
   - Изолированный Docker контейнер с `network_mode: none`
   - AST-фильтрация для безопасности (запрет `os`, `subprocess`, `eval`, `exec`)
-  - Лимиты ресурсов: CPU, RAM (512MB), время выполнения (30s)
-  - Предзагруженные библиотеки: numpy, pandas, geopandas, shapely
+  - Лимиты ресурсов: CPU, RAM (1.5 GB), время выполнения (30s)
+  - Полный гео-стек: GDAL/OGR, rasterio, pyogrio, xarray/rioxarray, scipy.ndimage, scikit-image, matplotlib, PDAL/laspy, pyproj — см. раздел «🌍 Гео-стек песочницы»
   - Автоматическая передача контекста между инструментами
   
 - **Улучшения AI-агента:**
@@ -528,6 +530,18 @@ docker compose exec backend python manage.py update_industrial_zones --bbox 80,5
 - **Получение API ключа RouterAI**: https://routerai.ru/settings/keys
 
 ## Обновления и дополнения
+
+### v0.0.12 (2026-09-25) — Полный гео-стек в песочнице: GDAL/PROJ, растровая наука, графики, LiDAR
+- ✅ **GDAL + PROJ системно** в образе sandbox: все растровые/векторные форматы (GeoTIFF, COG, JPEG2000, NetCDF, HDF5, Shapefile, GPKG, KML…), виртуальные ФС `/vsimem/`, `/vsizip/`, сетки трансформаций `proj-data` офлайн (`PROJ_NETWORK=OFF`)
+- ✅ **Python-библиотеки предимпортированы** в безопасные globals executor'а (код агента пишется без `import`): `gdal/ogr/osr`, `rasterio` (+`geometry_mask`, `rasterize`, `Resampling`), `pyogrio`, `xarray/rioxarray`, `netCDF4/h5py/h5netcdf`, `pyproj (CRS/Transformer/Geod/Proj)`, `scipy.ndimage/stats/signal`, `skimage.measure/morphology/filters`, `laspy/pdal`, `mercantile`, `geopy`
+- ✅ **matplotlib + контракт `__charts__`**: агент возвращает графики/картограммы PNG (base64) вместе с GeoJSON из `__result__`; бэкенд пробрасывает их в чат; шрифты и `MPLCONFIGDIR` подготовлены на этапе сборки (совместимо с read-only ФС)
+- ✅ **LiDAR-стек**: LasZip + LAZperf собраны из исходников, PDAL 3.4.1 с драйверами LAS/LAZ (проверка `pdal --drivers` на сборке), pip-обёртка PDAL привязана к версии системной библиотеки, laspy 2.x + экстра `laszip` для чтения LAZ
+- ✅ **Загрузка геоданных в БД через GDAL**: драйвер **PGDump** доступен в песочнице в режиме генерации SQL (`PG_DUMP=ON` + `/vsimem/`) — агент конвертирует Shapefile/GPKG/KML/CSV в скрипт импорта, который бэкенд применяет к PostGIS (сама песочница без сети, прямых коннектов не делает); geoalchemy2 в образе — для сериализации геометрий
+- ✅ **RAM лимит увеличен 512 MB → 1.5 GB** (лимиты docker-compose и `RLIMIT_AS` в executor.py синхронно) — под растровые операции
+- ✅ **Tool description и SANDBOX INSTRUCTIONS LLM обновлены**: полный список библиотек, советы по проекциям (буферы в метрах через UTM, Geod для площадей), пример workflow «вектор пожара → маска растра → NBR → binary_opening → кластеры label+regionprops → GeoJSON + график», запрет network/`/vsicurl/`
+- ✅ Диагностический эндпоинт **`GET :8002/libs`** — версии пакетов и рантайм-проверка импортов всего стека
+- ⚠️ **whitebox не устанавливался**: бинарник WhiteboxTools (~100 МБ) скачивается при первом вызове — несовместимо с read-only sandbox без сети; рельеф/стоки закрываются `gdal.DEMProcessing` (slope/aspect/hillshade/TPI) + scipy/numpy
+- ℹ️ eodag/sentinelsat/copernicusdataretrieval/contextily сознательно вне песочницы (нужна сеть) — поиск снимков и фоновые тайлы остаются за бэкендом/MCP; leafmap/kepler.gl не подходят: вывод sandbox остаётся GeoJSON + PNG
 
 ### v0.0.11 (2026-09-24) — Контекстные сводки, оптимизации производительности, улучшения UI
 
@@ -634,7 +648,7 @@ docker compose exec backend python manage.py update_industrial_zones --bbox 80,5
 - **Read-only файловая система** — `read_only: true`
 - **Лимиты ресурсов**:
   - CPU: 1.0 ядро
-  - RAM: 512 MB
+  - RAM: 1.5 GB (повышено с 512 MB под растровые операции GDAL/rasterio; `RLIMIT_AS` в executor.py синхронизирован)
   - Время выполнения: 30 секунд
   - Количество процессов: 50
 - **ОС-уровень** — `resource.setrlimit(RLIMIT_CPU, RLIMIT_AS)` для защиты от зомби-процессов
@@ -693,6 +707,123 @@ docker compose exec backend python manage.py update_industrial_zones --bbox 80,5
     *Пример:* «Построй буфер 20 км вокруг точки 37.6, 55.7 и посчитай его площадь»
 18. **`analyze_fire_risk`** — оценка риска для населённых пунктов.
     *Пример:* «Насколько велик риск для посёлков от пожаров в bbox 75,55,110,75?»
-19. **`execute_python`** — выполнение кода в изолированном sandbox.
+19. **`execute_python`** — выполнение кода в изолированном sandbox с полным гео-стеком (GDAL/OGR, rasterio, scipy.ndimage, scikit-image, matplotlib `__charts__`, PDAL/laspy, pyproj). Загрузка данных в PostGIS — генерацией PGDump-скрипта через драйвер GDAL PGDump прямо в коде песочницы.
     *Пример:* «Посчитай среднее и медиану FRP по последним найденным пожарам и построй гистограмму распределения по дням»
 
+
+
+---
+
+## 🌍 Гео-стек песочницы (sandbox)
+
+AI-агент выполняет пользовательский Python-код в изолированной песочнице (`fire-monitor/sandbox/executor.py`). Все библиотеки ниже **уже импортированы** — агент пишет код без единого `import`-оператора. Состав и версии можно проверить в рантайме: `GET http://localhost:8002/libs`.
+
+### Форматы геоданных (импорт / экспорт)
+
+| Библиотека | Что даёт |
+|---|---|
+| **GDAL/OGR** (`gdal`, `ogr`, `osr`) | Чтение/запись **любого** гео-формата: GeoTIFF, COG, JPEG2000, NetCDF, HDF5, GRIB, Shapefile, GeoJSON, GPKG, KML, TAB…; виртуальные файловые системы `/vsimem/`, `/vsizip/`; конвейеры `gdal.Translate` / `gdal.Warp` / `gdal.VectorTranslate` / `gdal.DEMProcessing` |
+| **rasterio** (+ алиас `raster_open`) | Оконное чтение растров, `geometry_mask` / `rasterize` (вектор → маска растра), `Resampling` (nearest/bilinear/cubic), `features.shapes()` (растр → полигоны), репроекция `warp` |
+| **pyogrio** | Векторный I/O на скорости GDAL: `read_dataframe` / `write_dataframe` для любых векторных форматов |
+| **geopandas** (`gpd`) | Векторный анализ: буферы, оверлеи (`overlay`), пространственные джойны (`sjoin`), импорт/экспорт Shapefile/GPKG/GeoJSON, `to_postgis()` |
+| **xarray + rioxarray** (`xr`) | Многомерные массивы (временные ряды снимков, климатические данные), метки осей, срезы по времени/пространству |
+| **netCDF4 / h5py / h5netcdf** | Прямое чтение ERA5/MODIS/климатических файлов NetCDF и HDF5 |
+| **laspy + laszip + PDAL** (`pdal`) | Облака точек LiDAR: LAS/LAZ (сжатие LAZ через системные LasZip/LAZperf), фильтры PDAL (ground classification, шумодавка, статистика высот) |
+| **mercantile** | XYZ-тайлы: bbox → список тайлов, tile → границы |
+| **rio-cogeo** | Валидация и создание Cloud Optimized GeoTIFF |
+
+### Проекции и геодезия (PROJ / pyproj)
+
+- `CRS`, `Transformer.from_crs(..., always_xy=True)` — перепроецирование векторов и растров (WGS84 ⇄ UTM ⇄ EPSG:3857 ⇄ локальные СК)
+- `Geod(ellps="WGS84").geometry_area_perimeter()` — точные площади/периметры в **метрах**, а не в градусах (критично для площадей гарей)
+- Буферы в метрах: репроецировать в равновеликую/локальную СК (UTM) → `buffer(50000)` → обратно в EPSG:4326
+- `transform_bounds`, `calculate_default_crs` — корректные границы и ЦРК растра
+- Сетка геодезических трансформаций встроена в образ (`proj-data`, `PROJ_NETWORK=OFF` — сети у песочницы нет)
+
+### Растровая наука и морфология
+
+- **scipy.ndimage**: `binary_opening/closing` (удаление шумовых пикселей гарей), `label` (связные области), `gaussian_filter`, `distance_transform_edt`, `generic_filter`
+- **scikit-image** (`sk_measure`, `sk_morpho`, `sk_filters`): `measure.label` + `regionprops` (площадь, центроид каждого кластера гарей), морфология, пороговая сегментация (Otsu)
+- **scipy.stats / scipy.signal** — статистика и сглаживание временных рядов (динамика NDVI/NBR)
+- Рельеф и стоки — штатными средствами GDAL: `gdal.DEMProcessing` (slope, aspect, hillshade, TPI) + растровая арифметика numpy (whitebox не используется: его бинарник требует скачивания из сети при первом запуске, что несовместимо с read-only sandbox)
+
+### Графики и картограммы (`__charts__`)
+
+**matplotlib** (бэкенд Agg, шрифты и кэш закэшированы на этапе сборки — read-only ФС не мешает). Агент возвращает рисунки в специальном контейнере `__charts__`:
+
+```python
+fig, ax = plt.subplots(figsize=(8, 5))
+ax.hist(frp_values, bins=20, color='#e8590c')
+ax.set_title('Распределение FRP')
+__charts__ = [("frp_histogram", fig)]   # [(название, Figure)] — до ~5 графиков
+```
+
+Ответ sandbox содержит поле `charts: [{title, format: "png", data_base64}]` — фронтенд рендерит их прямо в чате рядом с картой. Картограмма — та же механика: `plt.imshow(raster, cmap='RdYlGn_r', extent=...)` с `extent` из аффина растра.
+
+### Загрузка геоданных в PostgreSQL/PostGIS через GDAL
+
+Песочница изолирована от сети (`network_mode: none`), поэтому прямое подключение к БД из неё невозможно. Агент работает через драйвер **PGDump** в режиме генерации SQL (без подключения): код в песочнице конвертирует любой источник, который читает OGR (Shapefile, GPKG, KML, CSV с координатами), в скрипт `INSERT`+`COPY`, а бэкенд исполняет его через `psql`/Django ORM:
+
+```python
+src = ogr.Open(vsimem_zip)                           # любой читаемый OGR источник
+ds = ogr.GetDriverByName("PGDump").CreateDataSource(
+    "/vsimem/import.sql",                            # файл не открывается — только SQL
+    options=["PG_DUMP=ON", "LAUNDER=NO", "OVERWRITE=YES"]
+)
+lyr = ds.CreateLayer("imported_layer", srs, geom_type=ogr.wkbPolygon)
+# ... копируем поля и геометрии из src в lyr ...
+del ds                                               # закрываем слой — дамп готов в /vsimem
+f = gdal.VSIFOpenL("/vsimem/import.sql", "rb")
+data = gdal.VSIFReadL(1, 10**7, f)                   # читаем сгенерированный SQL
+gdal.VSIFCloseL(f)
+print(data.decode())                                 # бэкенд/оператор применит его к PostGIS
+```
+
+Полученный дамп исполняется через `psql` — так в PostGIS загружаются данные любой сложности без ручного ogr2ogr. Для простых случаев достаточно `gdf.to_postgis(...)` (geoalchemy2 в образе есть).
+
+### Пример workflow «вектор пожара → маска растра → NBR-аналитика»
+
+Агент выполняет его за один вызов `execute_python` (растры и полигоны передаются в `context`):
+
+1. **Вектор → маска**: `geometry_mask(burn_polygons, transform=src.transform)` — обрезаем растры pre/post до контура гари
+2. **NBR/dNBR**: `(NIR − SWIR)/(NIR + SWIR)` до выгорания минус после
+3. **Порог тяжести**: dNBR < −0.66 → high severity (классификация USGS)
+4. **Шумодавка**: `ndimage.binary_opening(mask, iterations=2)` — убираем одиночные пиксели
+5. **Кластеры гарей**: `sk_measure.label(mask)` + `regionprops` — площадь/центроид каждого связного пятна
+6. **Обратно в вектор**: `rasterio.features.shapes()` → GeoJSON в `__result__` (на карту) + гистограмма площадей кластеров в `__charts__`
+
+## 📝 Примеры промтов для работы с геоданными
+
+Все примеры отправляются в AI-чат (http://localhost:5173) или через `POST /api/chat/`. Агент сам выбирает инструменты и пишет код в песочницу.
+
+### Импорт / экспорт между форматами
+- *«Конвертируй загруженный Shapefile в GeoJSON и покажи полигоны на карте»*
+- *«Сохрани все гари из БД в формат GeoPackage со всеми атрибутами тяжести»*
+- *«Переведи полигоны пожаров из EPSG:4326 в UTM зону 48N и посчитай площади в гектарах»*
+- *«Читай NetCDF-файл с осадками (ERA5) как xarray, сделай срез за июль и верни сетку полигонов с интенсивностью»*
+- *«Извлеки из KML-тректа облёта только линию полёта и построй буфер 500 м вокруг него»*
+
+### Загрузка данных в базу через GDAL
+- *«Загрузи этот CSV с колонками lat/lon в PostGIS как таблицу observation_points (через GDAL PGDump)»*
+- *«Импортируй GPKG со слоями дорог в нашу базу и перепроектируй геометрию в EPSG:4326 при импорте»*
+- *«Сделай SQL-скрипт импорта Shapefile гарей в PostGIS через драйвер GDAL PGDump, выполни и покажи результат на карте»*
+
+### Проекции и измерения
+- *«Построй буфер ровно 25 км вокруг каждого очага с FRP > 10 МВт (через UTM, не в градусах) и верни суммарную защищаемую площадь в га»*
+- *«Пересчитай координаты всех пожарных частей в EPSG:3857 и построй равномерную сетку 10×10 км по bbox региона»*
+- *«Измерь геодезическое расстояние по эллипсоиду WGS84 от базы до самого дальнего пожара»*
+
+### Графики и картограммы
+- *«Построй гистограмму распределения FRP по всем найденным пожарам»*
+- *«Сделай картограмму dNBR по границам гарей с легендой категорий тяжести (USGS)»*
+- *«Построй временной ряд количества термоточек по дням за сентябрь и наложи линейный тренд»*
+- *«Визуализируй рельеф района пожара (hillshade + slope) цветной шкалой»*
+
+### Анализ гарей и LiDAR
+- *«Для последних гарей выполни полный NBR-анализ: маска полигона → dNBR → удаление шума (binary_opening) → кластеры (label+regionprops) → покажи полигоны кластеров и диаграмму площадей»*
+- *«Раздели гари по категориям тяжести USGS (low/moderate/high) и построй круговую диаграмму распределения»*
+- *«Прочитай облако точек LiDAR (LAS), отфильтруй ground-классификацию через PDAL и построй гистограмму высот крон»*
+
+### Комбинированные сценарии
+- *«Найди пожары под Байкалом, для каждого оцени риск для ближайших деревень: буфер 5 км, пересечение с населёнными пунктами, отсортируй по числу затронутых жителей и построй маршруты выездов»*
+- *«Сгенерируй отчёт по гарям Иркутской области за лето, добавь картограмму тяжести и график динамики по месяцам»*
