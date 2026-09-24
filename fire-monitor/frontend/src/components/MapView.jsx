@@ -379,6 +379,7 @@ function MapView({
     // ОЧИСТКА
     if (map.getLayer('custom-polygon-layer')) map.removeLayer('custom-polygon-layer')
     if (map.getLayer('custom-polygon-outline')) map.removeLayer('custom-polygon-outline')
+    if (map.getLayer('custom-point-labels')) map.removeLayer('custom-point-labels')
     if (map.getLayer('custom-point-layer')) map.removeLayer('custom-point-layer')
     if (map.getSource('custom-polygon-data')) map.removeSource('custom-polygon-data')
     if (map.getSource('custom-point-data')) map.removeSource('custom-point-data')
@@ -423,6 +424,29 @@ function MapView({
           'circle-stroke-color': '#fff',
         },
       })
+
+      // Добавляем текстовые подписи для точек с properties.label
+      const hasLabels = points.some(p => p.properties?.label)
+      if (hasLabels) {
+        map.addLayer({
+          id: 'custom-point-labels',
+          type: 'symbol',
+          source: 'custom-point-data',
+          filter: ['has', 'label'],
+          layout: {
+            'text-field': ['get', 'label'],
+            'text-size': 12,
+            'text-offset': [0, 1.5],
+            'text-anchor': 'top',
+            'text-allow-overlap': true,
+          },
+          paint: {
+            'text-color': '#fff',
+            'text-halo-color': '#000',
+            'text-halo-width': 1.5,
+          },
+        })
+      }
     }
   }, [otherCustomData, showCustom])
 

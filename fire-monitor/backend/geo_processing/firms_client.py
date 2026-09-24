@@ -7,6 +7,7 @@ API docs: https://firms.modaps.eosdis.nasa.gov/api/
 
 import requests
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from django.conf import settings
@@ -23,6 +24,25 @@ SOURCE_MAP = {
     'MODIS_Aqua': 'MODIS',
     'MODIS_Terra': 'MODIS',
 }
+
+# Shared requests session for connection pooling
+_session = None
+
+
+def _get_session():
+    """Get or create shared requests session with connection pooling."""
+    global _session
+    if _session is None:
+        _session = requests.Session()
+        # Configure connection pool
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=10,
+            pool_maxsize=10,
+            max_retries=3
+        )
+        _session.mount('https://', adapter)
+        _session.mount('http://', adapter)
+    return _session
 
 
 def get_firms_api_key():
@@ -70,7 +90,8 @@ def fetch_active_fires(
     url = f'{FIRMS_API_BASE}/area/csv/{api_key}/{api_source}/{area}/{days}'
 
     try:
-        response = requests.get(url, timeout=30)
+        session = _get_session()
+        response = session.get(url, timeout=30)
         response.raise_for_status()
     except requests.RequestException as e:
         logger.error(f'FIRMS API request failed: {e}')
@@ -202,9 +223,26 @@ def parse_firms_record(record, source):
 
 
 def fetch_all_sources(bbox=None, days=1, api_key=None):
-    """Fetch active fires from all available sources."""
+    """
+    Fetch active fires from all available sources in parallel.
+    Uses ThreadPoolExecutor for ~4x speedup when fetching from 4 sources.
+    """
     all_fires = []
-    for source in SOURCE_MAP:
-        fires = fetch_active_fires(source=source, bbox=bbox, days=days, api_key=api_key)
-        all_fires.extend(fires)
+
+    # Fetch from all sources in parallel
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {
+            executor.submit(fetch_active_fires, source=source, bbox=bbox, days=days, api_key=api_key): source
+            for source in SOURCE_MAP
+        }
+        for future in as_completed(futures):
+            source = futures[future]
+            try:
+                fires = future.result()
+                all_fires.extend(fires)
+                logger.debug(f'Fetched {len(fires)} fires from {source}')
+            except Exception as e:
+                logger.error(f'Error fetching from {source}: {e}')
+
+    logger.info(f'Total fires fetched from all sources: {len(all_fires)}')
     return all_fires

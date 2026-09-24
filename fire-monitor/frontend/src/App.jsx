@@ -156,9 +156,9 @@ function App() {
 
   const handleChatResponse = async (mapDataList) => {
     if (mapDataList && mapDataList.length > 0) {
-      // Собираем все custom features в один массив
-      const allCustomFeatures = []
-      
+      // Собираем новые custom features из текущего ответа
+      const newCustomFeatures = []
+
       // Обрабатываем каждый результат в зависимости от типа
       mapDataList.forEach(item => {
         if (item.type === 'burn') {
@@ -169,18 +169,22 @@ function App() {
           // custom / routes / fire_stations: MapView сам разделит features
           // на слои маршрутов, станций и прочего по геометрии и properties.type
           if (item.data?.features) {
-            allCustomFeatures.push(...item.data.features)
+            newCustomFeatures.push(...item.data.features)
           } else if (item.data?.type === 'Feature') {
-            allCustomFeatures.push(item.data)
+            newCustomFeatures.push(item.data)
           }
         }
       })
-      
-      // Устанавливаем объединённые custom данные
-      if (allCustomFeatures.length > 0) {
-        setCustomData({
-          type: 'FeatureCollection',
-          features: allCustomFeatures
+
+      // Добавляем новые features к существующим (не заменяем!)
+      // Это позволяет сохранять маршруты при добавлении подписей и других элементов
+      if (newCustomFeatures.length > 0) {
+        setCustomData(prev => {
+          const existingFeatures = prev?.features || []
+          return {
+            type: 'FeatureCollection',
+            features: [...existingFeatures, ...newCustomFeatures]
+          }
         })
       }
 

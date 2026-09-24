@@ -1126,12 +1126,13 @@ def execute_tool(name, args, context_bbox=None):
         sandbox_url = os.getenv("SANDBOX_URL", "http://sandbox:8002/execute")
 
         try:
-            # Используем синхронный клиент (execute_tool - sync функция)
-            with httpx.Client(timeout=35.0) as client:
-                response = client.post(
-                    sandbox_url,
-                    json={'code': code, 'context': context}
-                )
+            # Используем общий клиент из routing.py для connection pooling
+            from .routing import _get_http_client
+            client = _get_http_client()
+            response = client.post(
+                sandbox_url,
+                json={'code': code, 'context': context}
+            )
 
             if response.status_code == 400:
                 return {"summary": {"error": f"Security violation: {response.json().get('detail')}"}}

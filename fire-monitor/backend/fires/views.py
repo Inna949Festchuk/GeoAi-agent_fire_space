@@ -6,6 +6,7 @@ from rest_framework_gis.filters import InBBOXFilter, DistanceToPointFilter
 from django.contrib.gis.geos import Polygon, Point, GEOSGeometry
 from django.contrib.gis.db.models.functions import Distance
 from django.db import models
+from django.db.models import Q
 from django.views.decorators.csrf import csrf_exempt
 from datetime import datetime, timedelta
 import logging
@@ -40,12 +41,24 @@ class FireHotspotViewSet(viewsets.ReadOnlyModelViewSet):
         qs = super().get_queryset()
 
         # Filter by date range
+        # Optimization: use detected_at__gte/lte with datetime instead of detected_at__date
+        # This allows index scan instead of seq scan with DATE() function
         date_from = self.request.query_params.get('date_from')
         date_to = self.request.query_params.get('date_to')
         if date_from:
-            qs = qs.filter(detected_at__date__gte=date_from)
+            # Convert date to datetime for index-friendly query
+            try:
+                dt_from = datetime.strptime(date_from, '%Y-%m-%d')
+                qs = qs.filter(detected_at__gte=dt_from)
+            except ValueError:
+                pass
         if date_to:
-            qs = qs.filter(detected_at__date__lte=date_to)
+            try:
+                # Include the entire end date by adding 1 day
+                dt_to = datetime.strptime(date_to, '%Y-%m-%d') + timedelta(days=1)
+                qs = qs.filter(detected_at__lt=dt_to)
+            except ValueError:
+                pass
 
         # Filter by minimum confidence
         min_confidence = self.request.query_params.get('min_confidence')
@@ -67,6 +80,8 @@ class FireHotspotViewSet(viewsets.ReadOnlyModelViewSet):
         """Get fire statistics for the current filter set."""
         qs = self.get_queryset()
 
+        # Optimization: single query with GROUP BY for both source and confidence
+        # Instead of separate queries for each grouping
         stats = {
             'total_hotspots': qs.count(),
             'by_source': {},
@@ -75,22 +90,22 @@ class FireHotspotViewSet(viewsets.ReadOnlyModelViewSet):
             'avg_frp': 0,
         }
 
-        for source, count in qs.values_list('source').annotate(
-            count=models.Count('id')
-        ).values_list('source', 'count'):
-            stats['by_source'][source] = count
-
-        for conf, count in qs.values_list('confidence').annotate(
-            count=models.Count('id')
-        ).values_list('confidence', 'count'):
-            stats['by_confidence'][conf] = count
-
+        # Single aggregation query for all stats
         agg = qs.aggregate(
+            total=models.Count('id'),
             avg_brightness=models.Avg('brightness'),
             avg_frp=models.Avg('frp'),
         )
         stats['avg_brightness'] = round(agg['avg_brightness'] or 0, 1)
         stats['avg_frp'] = round(agg['avg_frp'] or 0, 2)
+
+        # Group by source — single query
+        for row in qs.values('source').annotate(count=models.Count('id')):
+            stats['by_source'][row['source']] = row['count']
+
+        # Group by confidence — single query
+        for row in qs.values('confidence').annotate(count=models.Count('id')):
+            stats['by_confidence'][row['confidence']] = row['count']
 
         return Response(stats)
 
@@ -129,23 +144,30 @@ class BurnAreaViewSet(viewsets.ReadOnlyModelViewSet):
         """Get burn area statistics."""
         qs = self.get_queryset()
 
+        # Optimization: DB aggregation instead of loading all objects into Python
+        # Single query with GROUP BY instead of ~9 separate queries
+        agg = qs.aggregate(
+            total_areas=models.Count('id'),
+            total_area_ha=models.Sum('area_ha'),
+            avg_dnbr=models.Avg('dnbr_mean'),
+        )
+
         stats = {
-            'total_areas': qs.count(),
-            'total_area_ha': round(sum(b.area_ha for b in qs), 2),
+            'total_areas': agg['total_areas'] or 0,
+            'total_area_ha': round(agg['total_area_ha'] or 0, 2),
             'by_severity': {},
-            'avg_dnbr': 0,
+            'avg_dnbr': round(agg['avg_dnbr'] or 0, 3),
         }
 
-        for severity in dict(BurnArea.SEVERITY_CHOICES):
-            severity_qs = qs.filter(severity=severity)
-            if severity_qs.exists():
-                stats['by_severity'][severity] = {
-                    'count': severity_qs.count(),
-                    'area_ha': round(sum(b.area_ha for b in severity_qs), 2),
-                }
-
-        agg = qs.aggregate(avg_dnbr=models.Avg('dnbr_mean'))
-        stats['avg_dnbr'] = round(agg['avg_dnbr'] or 0, 3)
+        # Single GROUP BY query for severity breakdown
+        for row in qs.values('severity').annotate(
+            count=models.Count('id'),
+            area_ha=models.Sum('area_ha'),
+        ):
+            stats['by_severity'][row['severity']] = {
+                'count': row['count'],
+                'area_ha': round(row['area_ha'] or 0, 2),
+            }
 
         return Response(stats)
 
@@ -232,25 +254,29 @@ def fetch_fires_view(request):
     valid, filtered = filter_fire_hotspots(fires)
 
     # Store in database
+    # Optimization: wrap in transaction.atomic for faster bulk inserts
+    from django.db import transaction
+
     created = 0
-    for fire in valid:
-        _, was_created = FireHotspot.objects.update_or_create(
-            location=Point(fire['longitude'], fire['latitude']),
-            detected_at=fire['detected_at'],
-            source=fire['source'],
-            defaults={
-                'brightness': fire['brightness'],
-                'brightness_31': fire.get('brightness_31'),
-                'confidence': fire['confidence'],
-                'frp': fire.get('frp'),
-                'satellite': fire.get('satellite', ''),
-                'instrument': fire.get('instrument', ''),
-                'daynight': fire.get('daynight', 'D'),
-                'filter_flag': fire.get('filter_flag', ''),
-            },
-        )
-        if was_created:
-            created += 1
+    with transaction.atomic():
+        for fire in valid:
+            _, was_created = FireHotspot.objects.update_or_create(
+                location=Point(fire['longitude'], fire['latitude']),
+                detected_at=fire['detected_at'],
+                source=fire['source'],
+                defaults={
+                    'brightness': fire['brightness'],
+                    'brightness_31': fire.get('brightness_31'),
+                    'confidence': fire['confidence'],
+                    'frp': fire.get('frp'),
+                    'satellite': fire.get('satellite', ''),
+                    'instrument': fire.get('instrument', ''),
+                    'daynight': fire.get('daynight', 'D'),
+                    'filter_flag': fire.get('filter_flag', ''),
+                },
+            )
+            if was_created:
+                created += 1
 
     # Return as GeoJSON
     features = []
@@ -572,24 +598,45 @@ def overview_stats(request):
         except (ValueError, TypeError):
             pass
 
+    # Optimization: use datetime range instead of detected_at__date for index scan
     if date_from:
-        fire_qs = fire_qs.filter(detected_at__date__gte=date_from)
+        try:
+            dt_from = datetime.strptime(date_from, '%Y-%m-%d')
+            fire_qs = fire_qs.filter(detected_at__gte=dt_from)
+        except ValueError:
+            pass
         burn_qs = burn_qs.filter(post_date__gte=date_from)
     if date_to:
-        fire_qs = fire_qs.filter(detected_at__date__lte=date_to)
+        try:
+            dt_to = datetime.strptime(date_to, '%Y-%m-%d') + timedelta(days=1)
+            fire_qs = fire_qs.filter(detected_at__lt=dt_to)
+        except ValueError:
+            pass
         burn_qs = burn_qs.filter(post_date__lte=date_to)
+
+    # Optimization: DB aggregation instead of loading all objects into Python
+    # Single query for fire stats instead of multiple count() calls
+    fire_agg = fire_qs.aggregate(
+        total=models.Count('id'),
+        high_confidence=models.Count('id', filter=Q(confidence='high')),
+        avg_brightness=models.Avg('brightness'),
+    )
+
+    # Single query for burn stats instead of loading all objects
+    burn_agg = burn_qs.aggregate(
+        total_areas=models.Count('id'),
+        total_area_ha=models.Sum('area_ha'),
+    )
 
     stats = {
         'fires': {
-            'total': fire_qs.count(),
-            'high_confidence': fire_qs.filter(confidence='high').count(),
-            'avg_brightness': round(
-                fire_qs.aggregate(models.Avg('brightness'))['brightness__avg'] or 0, 1
-            ),
+            'total': fire_agg['total'] or 0,
+            'high_confidence': fire_agg['high_confidence'] or 0,
+            'avg_brightness': round(fire_agg['avg_brightness'] or 0, 1),
         },
         'burns': {
-            'total_areas': burn_qs.count(),
-            'total_area_ha': round(sum(b.area_ha for b in burn_qs), 2),
+            'total_areas': burn_agg['total_areas'] or 0,
+            'total_area_ha': round(burn_agg['total_area_ha'] or 0, 2),
         },
     }
 

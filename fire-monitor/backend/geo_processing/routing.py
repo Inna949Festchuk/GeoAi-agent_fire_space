@@ -22,6 +22,17 @@ OVERPASS_SERVERS = [
     "https://overpass.openstreetmap.ru/api/interpreter",  # Российское зеркало
 ]
 
+# Shared httpx client for connection pooling
+_http_client = None
+
+
+def _get_http_client():
+    """Get or create shared httpx client with connection pooling."""
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.Client(timeout=30.0)
+    return _http_client
+
 
 def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Calculate distance between two points using haversine formula (km)."""
@@ -45,10 +56,10 @@ def build_route(start: list, end: list) -> dict:
         Dict with geojson, distance_km, duration_min, success
     """
     osrm_url = f"{OSRM_BASE_URL}/route/v1/driving/{start[0]},{start[1]};{end[0]},{end[1]}?overview=full&geometries=geojson"
-    
+
     try:
-        with httpx.Client(timeout=30.0) as client:
-            response = client.get(osrm_url)
+        client = _get_http_client()
+        response = client.get(osrm_url)
         
         if response.status_code != 200:
             return {"error": f"OSRM error: HTTP {response.status_code}", "success": False}
@@ -224,17 +235,17 @@ def find_nearest_fire_stations(lat: float = None, lon: float = None, radius_km: 
         # Пробуем серверы по очереди для отказоустойчивости
         response = None
         last_error = None
+        client = _get_http_client()
         for server_url in OVERPASS_SERVERS:
             try:
                 logger.info(f"Trying Overpass server: {server_url}")
-                with httpx.Client(timeout=35.0) as client:
-                    response = client.post(
-                        server_url,
-                        data={'data': query},
-                        headers={
-                            'User-Agent': 'FireMonitorApp/1.0 (Educational Wildfire Monitoring Project)',
-                        }
-                    )
+                response = client.post(
+                    server_url,
+                    data={'data': query},
+                    headers={
+                        'User-Agent': 'FireMonitorApp/1.0 (Educational Wildfire Monitoring Project)',
+                    }
+                )
                 if response.status_code == 200:
                     logger.info(f"Success with {server_url}")
                     break
