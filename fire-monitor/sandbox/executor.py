@@ -254,7 +254,7 @@ def execute_code_sync(code: str, context: dict) -> dict:
         from rasterio import open as raster_open
         from rasterio.enums import Resampling
         from rasterio.features import geometry_mask, rasterize
-        from rasterio.warp import calculate_default_crs, transform_bounds
+        from rasterio.warp import transform_bounds
         import rioxarray
         import xarray as xr
         from osgeo import gdal, ogr, osr
@@ -310,7 +310,6 @@ def execute_code_sync(code: str, context: dict) -> dict:
         safe_globals['Resampling'] = Resampling
         safe_globals['geometry_mask'] = geometry_mask
         safe_globals['rasterize'] = rasterize
-        safe_globals['calculate_default_crs'] = calculate_default_crs
         safe_globals['transform_bounds'] = transform_bounds
         safe_globals['rioxarray'] = rioxarray
         safe_globals['xr'] = xr

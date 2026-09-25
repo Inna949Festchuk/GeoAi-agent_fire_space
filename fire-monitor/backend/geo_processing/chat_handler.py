@@ -545,7 +545,7 @@ SANDBOX INSTRUCTIONS (execute_python):
    - shapely.ops: unary_union, transform, split, nearest_points
    - shapely: wkt, wkb
    - pyproj: CRS, Transformer, Geod, Proj — coordinate transformations and geodesic distances
-   - rasterio (raster_open alias for rasterio.open), Resampling, geometry_mask, rasterize, calculate_default_crs, transform_bounds
+   - rasterio (raster_open alias for rasterio.open), Resampling, geometry_mask, rasterize, transform_bounds
    - GDAL Python bindings: gdal, ogr, osr (from osgeo) — any GDAL-supported format (GeoTIFF, COG, Shapefile, GeoJSON, GPKG, KML, NetCDF, HDF5, JPEG2000...)
    - xarray (as xr) + rioxarray — labeled n-D arrays, raster clipping/warping/reprojection
    - mercantile — tile math (XYZ tiles, bbox -> tiles)
