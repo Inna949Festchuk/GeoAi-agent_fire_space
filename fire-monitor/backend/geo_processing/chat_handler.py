@@ -356,6 +356,39 @@ TOOLS = [
     {
         'type': 'function',
         'function': {
+            'name': 'create_point_with_buffer',
+            'description': 'Create a map point (marker) and/or a circular buffer polygon around it, in WGS84 meters — in ONE fast call. USE THIS TOOL whenever the user asks to place a point/marker at a location or create a buffer/radius circle around a point or city (e.g. "установи точку в Калининграде и построй буфер 20 км", "нарисуй круг радиусом 50 км вокруг Москвы"). Geocoding is NOT needed: use your own knowledge for well-known city coordinates. NEVER build buffers with execute_python — it wastes iterations and often fails.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'lon': {
+                        'type': 'number',
+                        'description': 'Longitude of the center point (WGS84, e.g. Kaliningrad: 20.51)',
+                    },
+                    'lat': {
+                        'type': 'number',
+                        'description': 'Latitude of the center point (WGS84, e.g. Kaliningrad: 54.71)',
+                    },
+                    'radius_km': {
+                        'type': 'number',
+                        'description': 'Buffer radius in kilometers. OPTIONAL — if omitted or 0, only the point marker is created (no buffer).',
+                    },
+                    'name': {
+                        'type': 'string',
+                        'description': 'Display name for the point/buffer label (e.g. "Калининград")',
+                    },
+                    'segments': {
+                        'type': 'integer',
+                        'description': 'Number of polygon segments for the circle (default: 128)',
+                    },
+                },
+                'required': ['lon', 'lat'],
+            },
+        },
+    },
+    {
+        'type': 'function',
+        'function': {
             'name': 'build_route',
             'description': 'Build a driving route between two points using OSRM (Open Source Routing Machine). Returns GeoJSON LineString with route geometry, distance, and duration.',
             'parameters': {
@@ -555,6 +588,17 @@ SANDBOX INSTRUCTIONS (execute_python):
 6. To pass data from previous tools, use the context parameter (max 10MB).
 7. To display results on map, assign GeoJSON to __result__ variable (must be WGS84 / EPSG:4326).
 8. Available builtins: round, abs, min, max, sum, sorted, enumerate, zip, map, filter, len, int, float, str, list, dict, tuple, set, print, and all standard exceptions.
+9. 'math' is available as a pre-imported module (math.pi, math.sin, math.cos, math.radians) — use it WITHOUT an import statement. numpy (np) and pandas (pd) are available directly by name. NEVER write 'import math' or 'from math import ...'.
+
+POINT AND BUFFER (create_point_with_buffer) — CRITICAL:
+When the user asks to place a point/marker at a location or build a buffer/radius circle around a point or city
+(e.g. "установи точку в Калининграде и построй буфер 20 км"):
+1. Call create_point_with_buffer(lon=..., lat=..., radius_km=..., name="Калининград") ONCE.
+   For well-known cities use your own knowledge for coordinates (Kaliningrad: lon=20.51, lat=54.71).
+   Do NOT call any geocoder and do NOT search for coordinates.
+2. The tool returns the marker + exact circular buffer polygon (in real meters) and sends both to the map automatically.
+3. NEVER compute buffers or circles with execute_python — it wastes iterations and frequently fails.
+   (If you must do custom geometry in the sandbox anyway, reproject to an equal-area CRS and use shapely .buffer(radius_m).)
 
 MULTI-STEP WORKFLOWS:
 When user asks to "find fires AND filter/buffer/analyze them":
@@ -799,8 +843,16 @@ def handle_chat_message(message, bbox=None, history=None):
             func_args = json.loads(tool_call.function.arguments)
 
             # Если это execute_python и нет явного context — добавляем результаты предыдущих инструментов
-            if func_name == 'execute_python' and not func_args.get('context') and tool_results:
-                func_args['context'] = tool_results
+            if func_name == 'execute_python':
+                ctx = func_args.get('context')
+                if not isinstance(ctx, dict):
+                    ctx = {}
+                # always_xy=True + [minx, miny, maxx, maxy] — стандартный порядок bbox
+                ctx.setdefault('bbox', list(bbox) if bbox else None)
+                for k, v in tool_results.items():
+                    ctx.setdefault(k, v)
+                if ctx:
+                    func_args['context'] = ctx
 
             # dispatch_routes_to_fires: автоматически подставляем GeoJSON пожаров
             # из предыдущего вызова search_fires (LLM не должен копировать данные сам)
@@ -1257,6 +1309,94 @@ def execute_tool(name, args, context_bbox=None):
             return {"summary": {"error": "Sandbox service is unavailable. Is it running?"}}
         except Exception as e:
             return {"summary": {"error": f"Failed to connect to sandbox: {str(e)}"}}
+
+    elif name == 'create_point_with_buffer':
+        # Точка + буфер заданного радиуса в метрах — один быстрый вызов вместо
+        # песочницы (LLM тратил итерации на math/np, которых в builtins нет)
+        try:
+            lon = float(args.get('lon'))
+            lat = float(args.get('lat'))
+        except (TypeError, ValueError):
+            return {'summary': {'error': 'lon and lat must be numbers (WGS84)'}}
+        if not (-180 <= lon <= 180 and -90 <= lat <= 90):
+            return {'summary': {'error': f'Coordinates out of range: lon={lon}, lat={lat}'}}
+
+        radius_km = args.get('radius_km') or 0
+        try:
+            radius_km = float(radius_km)
+        except (TypeError, ValueError):
+            return {'summary': {'error': 'radius_km must be a number'}}
+        if radius_km < 0:
+            return {'summary': {'error': 'radius_km must be >= 0'}}
+        if radius_km > 20000:
+            return {'summary': {'error': 'radius_km too large (max 20000 km)'}}
+
+        try:
+            segments = max(16, min(int(args.get('segments') or 128), 512))
+        except (TypeError, ValueError):
+            segments = 128
+        point_name = args.get('name') or 'Точка'
+
+        features = []
+        summary = {
+            'success': True,
+            'point': {'name': point_name, 'lon': lon, 'lat': lat},
+        }
+
+        if radius_km > 0:
+            # Геодезический круг: смещения в метрах переводим в градусы
+            # с учётом сжатия параллелей (cos(lat))
+            import math as _math
+            dlat_deg = radius_km / 111.32
+            cos_lat = _math.cos(_math.radians(lat))
+            dlon_deg = radius_km / (111.32 * cos_lat) if cos_lat > 1e-9 else 180.0
+
+            coords = []
+            for i in range(segments + 1):
+                ang = 2 * _math.pi * (i % segments) / segments
+                coords.append([
+                    round(lon + dlon_deg * _math.cos(ang), 6),
+                    round(lat + dlat_deg * _math.sin(ang), 6),
+                ])
+
+            area_km2 = _math.pi * radius_km ** 2
+            buffer_name = f'{point_name} + {radius_km:g} км'
+            features.append({
+                'type': 'Feature',
+                'geometry': {'type': 'Polygon', 'coordinates': [coords]},
+                'properties': {
+                    'name': buffer_name,
+                    'label': buffer_name,
+                    'type': 'buffer',
+                    'radius_km': radius_km,
+                    'center': [lon, lat],
+                    'area_km2': round(area_km2, 1),
+                    'popup': (f'<b>{buffer_name}</b><br>'
+                              f'Центр: {lon:.4f}° в.д., {lat:.4f}° с.ш.<br>'
+                              f'Площадь: ~{area_km2:,.0f} км²'.replace(',', ' ')),
+                },
+            })
+            summary['buffer'] = {
+                'radius_km': radius_km,
+                'area_km2': round(area_km2, 1),
+                'polygon_features': 1,
+            }
+
+        features.append({
+            'type': 'Feature',
+            'geometry': {'type': 'Point', 'coordinates': [lon, lat]},
+            'properties': {
+                'name': point_name,
+                'label': point_name,
+                'type': 'marker',
+                'popup': f'<b>{point_name}</b><br>{lon:.4f}° в.д., {lat:.4f}° с.ш.',
+            },
+        })
+
+        geojson = {'type': 'FeatureCollection', 'features': features}
+        summary['map_note'] = ('Both the point marker and the buffer polygon were '
+                               'sent to the map automatically — just summarize the result.')
+        return {'summary': summary, 'geojson': geojson, 'data_type': 'custom'}
 
     elif name == 'build_route':
         start = args.get('start')
