@@ -160,6 +160,7 @@ CORS_ALLOWED_ORIGINS = [
 LLM_API_BASE_URL = os.environ.get('LLM_API_BASE_URL', 'https://routerai.ru/api/v1')
 LLM_API_KEY = os.environ.get('LLM_API_KEY', '')
 LLM_MODEL = os.environ.get('LLM_MODEL', 'qwen/qwen3.7-plus')
+LLM_REQUEST_TIMEOUT = int(os.environ.get('LLM_REQUEST_TIMEOUT', '180'))  # 3 minutes for complex multi-step requests
 
 # NASA FIRMS API
 FIRMS_API_KEY = os.environ.get('FIRMS_API_KEY', '')
