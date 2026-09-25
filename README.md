@@ -531,10 +531,11 @@ docker compose exec backend python manage.py update_industrial_zones --bbox 80,5
 
 ## Обновления и дополнения
 
-### v0.0.15 (2026-09-25) — Исправление критической ошибки импорта гео-библиотек в sandbox
-- 🐛 **Критическая ошибка**: `from rasterio.features import geometry_windows` вызывала падение всего блока импорта гео-библиотек в sandbox (`cannot import name 'geometry_windows' from 'rasterio.features'`)
-- ✅ **Результат ошибки**: все гео-библиотеки (Point, LineString, gpd, rasterio, gdal и др.) не добавлялись в `safe_globals`, агент не мог использовать их для выполнения кода
-- 🛠️ **Исправление**: удалён импорт `geometry_windows` из `executor.py` (строки 256, 312) и system prompt (chat_handler.py) — эта функция не существует в текущей версии rasterio
+### v0.0.15 (2026-09-25) — Исправление критических ошибок импорта гео-библиотек в sandbox
+- 🐛 **Критическая ошибка #1**: `from rasterio.features import geometry_windows` вызывала падение всего блока импорта гео-библиотек в sandbox (`cannot import name 'geometry_windows' from 'rasterio.features'`)
+- 🐛 **Критическая ошибка #2**: `from rasterio.warp import calculate_default_crs` также не существует в текущей версии rasterio
+- ✅ **Результат ошибок**: все гео-библиотеки (Point, LineString, gpd, rasterio, gdal и др.) не добавлялись в `safe_globals`, агент не мог использовать их для выполнения кода
+- 🛠️ **Исправление**: удалены импорты `geometry_windows` и `calculate_default_crs` из `executor.py` и system prompt (chat_handler.py) — эти функции не существуют в текущей версии rasterio
 - ✅ **Проверка**: все 14 импортов гео-библиотек теперь работают корректно (проверка через `/libs` endpoint)
 - ℹ️ **Влияние**: агент теперь может корректно создавать буферы, работать с точками/линиями/полигонами, выполнять геопространственный анализ
 
