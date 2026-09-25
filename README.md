@@ -531,6 +531,12 @@ docker compose exec backend python manage.py update_industrial_zones --bbox 80,5
 
 ## Обновления и дополнения
 
+### v0.0.16 (2026-09-25) — Увеличение LLM timeout и исправление диагностики sandbox
+- ⏱️ **LLM_REQUEST_TIMEOUT увеличен до 180 секунд** (было 90): сложные multi-step запросы с 5+ итерациями инструментов требуют больше времени для обработки. При старом timeout возникала ошибка "Connection error" после успешного выполнения всех инструментов
+- 🐛 **Исправлен импорт rasterio.open**: `from rasterio.open import open` → `from rasterio import open` (неправильный путь импорта вызывал падение блока гео-библиотек)
+- 🐛 **Исправлена диагностика /libs endpoint**: замена `__import__()` + `getattr()` на `importlib.import_module()` для корректной проверки подмодулей (osgeo.gdal, matplotlib.pyplot)
+- ✅ **Результат**: все 14 импортов гео-библиотек работают корректно, агент успешно создаёт буферы и выполняет геопространственный анализ
+
 ### v0.0.15 (2026-09-25) — Исправление критических ошибок импорта гео-библиотек в sandbox
 - 🐛 **Критическая ошибка #1**: `from rasterio.features import geometry_windows` вызывала падение всего блока импорта гео-библиотек в sandbox (`cannot import name 'geometry_windows' from 'rasterio.features'`)
 - 🐛 **Критическая ошибка #2**: `from rasterio.warp import calculate_default_crs` также не существует в текущей версии rasterio
