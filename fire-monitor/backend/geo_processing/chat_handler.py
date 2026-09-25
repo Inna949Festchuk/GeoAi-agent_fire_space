@@ -556,7 +556,21 @@ SANDBOX INSTRUCTIONS (execute_python):
 7. To display results on map, assign GeoJSON to __result__ variable (must be WGS84 / EPSG:4326).
 8. Available builtins: round, abs, min, max, sum, sorted, enumerate, zip, map, filter, len, int, float, str, list, dict, tuple, set, print, and all standard exceptions.
 
-BUFFER EXAMPLES (use shapely, NOT ogr):
+BUFFER EXAMPLES (use shapely + geopandas, NOT manual cos/sin calculations):
+
+User: "Create 20km buffer around a point"
+You:
+1. Call execute_python with code:
+   # Create point
+   point = Point(20.51, 54.71)
+   gdf = gpd.GeoDataFrame({'geometry': [point]}, crs='EPSG:4326')
+   # Reproject to UTM for metric buffer
+   gdf_utm = gdf.to_crs('EPSG:32634')
+   gdf_utm['geometry'] = gdf_utm.geometry.buffer(20000)  # 20km in meters
+   # Reproject back to WGS84
+   gdf_wgs = gdf_utm.to_crs('EPSG:4326')
+   __result__ = gdf_wgs.__geo_interface__
+
 User: "Create 30km buffer around a line"
 You:
 1. Call execute_python with code:
@@ -569,6 +583,8 @@ You:
    # Reproject back to WGS84
    gdf_wgs = gdf_utm.to_crs('EPSG:4326')
    __result__ = gdf_wgs.__geo_interface__
+
+CRITICAL: NEVER manually calculate cos/sin for buffers! Always use gdf.to_crs() + gdf.geometry.buffer(meters) + gdf.to_crs('EPSG:4326')
 
 MULTI-STEP WORKFLOWS:
 When user asks to "find fires AND filter/buffer/analyze them":
