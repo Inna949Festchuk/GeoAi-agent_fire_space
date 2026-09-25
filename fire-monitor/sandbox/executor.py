@@ -251,7 +251,7 @@ def execute_code_sync(code: str, context: dict) -> dict:
         from pyproj import CRS, Transformer, Geod, Proj
         # --- Растры / форматы геоданных (GDAL) ---
         import rasterio
-        from rasterio.open import open as raster_open
+        from rasterio import open as raster_open
         from rasterio.enums import Resampling
         from rasterio.features import geometry_mask, geometry_windows, rasterize
         from rasterio.warp import calculate_default_crs, transform_bounds
@@ -275,7 +275,6 @@ def execute_code_sync(code: str, context: dict) -> dict:
         from matplotlib.lines import Line2D
         # --- Облака точек LiDAR ---
         import laspy
-        import pdal
         # --- Вспомогательные ---
         import mercantile
 
@@ -337,7 +336,6 @@ def execute_code_sync(code: str, context: dict) -> dict:
         safe_globals['Line2D'] = Line2D
         # LiDAR
         safe_globals['laspy'] = laspy
-        safe_globals['pdal'] = pdal
         safe_globals['mercantile'] = mercantile
     except ImportError as e:
         logger.warning(f"Failed to import geo libraries: {e}")
@@ -448,7 +446,7 @@ async def libs():
         "gdal", "rasterio", "pyproj", "geopandas", "shapely",
         "rioxarray", "xarray", "netCDF4", "h5py", "h5netcdf",
         "rio-cogeo", "pyogrio", "mercantile", "geopy",
-        "scipy", "scikit-image", "matplotlib", "laspy", "laszip", "PDAL",
+        "scipy", "scikit-image", "matplotlib", "laspy", "laszip",
     ]
     versions = {}
     for name in wanted:
@@ -460,11 +458,10 @@ async def libs():
     runtime = {}
     for mod in ["osgeo.gdal", "rasterio", "pyproj", "geopandas", "shapely",
                 "rioxarray", "xarray", "netCDF4", "h5py", "mercantile",
-                "scipy.ndimage", "skimage.measure", "matplotlib.pyplot", "laspy", "pdal"]:
+                "scipy.ndimage", "skimage.measure", "matplotlib.pyplot", "laspy"]:
         try:
-            importlib_import = __import__(mod.split('.')[0])
-            for part in mod.split('.')[1:]:
-                importlib_import = getattr(importlib_import, part)
+            import importlib
+            importlib.import_module(mod)
             runtime[mod] = "ok"
         except Exception as e:
             runtime[mod] = f"error: {e}"

@@ -148,7 +148,7 @@ space/
 │  • AST-фильтрация (запрет os, subprocess, eval)                 │
 │  • Лимиты: CPU, RAM (1.5 GB), время (30s)                       │
 │  • Гео-стек: GDAL/OGR, rasterio, pyogrio, xarray/rioxarray,     │
-│    scipy.ndimage, scikit-image, matplotlib, PDAL/laspy, pyproj  │
+│    scipy.ndimage, scikit-image, matplotlib, laspy, pyproj       │
 │  • Вывод: GeoJSON (__result__) + графики PNG (__charts__)       │
 │  • network_mode: none (без доступа к сети)                      │
 ├─────────────────────────────────────────────────────────────────┤
@@ -181,7 +181,7 @@ MCP URL: http://localhost:8001/mcp
 - `find_nearest_fire_stations_mcp(lat, lon, radius_km)` — поиск ближайших пожарных частей через Overpass API
 
 ### Выполнение кода
-- `execute_python_mcp(code, context)` — выполнение Python кода в изолированной песочнице с полным гео-стеком: GDAL/OGR, rasterio, pyogrio, xarray/rioxarray, scipy.ndimage, scikit-image, matplotlib, PDAL/laspy, pyproj (подробности — раздел «🌍 Гео-стек песочницы» ниже)
+- `execute_python_mcp(code, context)` — выполнение Python кода в изолированной песочнице с полным гео-стеком: GDAL/OGR, rasterio, pyogrio, xarray/rioxarray, scipy.ndimage, scikit-image, matplotlib, laspy, pyproj (подробности — раздел «🌍 Гео-стек песочницы» ниже)
 
 ## 💬 Использование через AI Чат
 
@@ -501,7 +501,7 @@ docker compose exec backend python manage.py update_industrial_zones --bbox 80,5
   - Изолированный Docker контейнер с `network_mode: none`
   - AST-фильтрация для безопасности (запрет `os`, `subprocess`, `eval`, `exec`)
   - Лимиты ресурсов: CPU, RAM (1.5 GB), время выполнения (30s)
-  - Полный гео-стек: GDAL/OGR, rasterio, pyogrio, xarray/rioxarray, scipy.ndimage, scikit-image, matplotlib, PDAL/laspy, pyproj — см. раздел «🌍 Гео-стек песочницы»
+  - Полный гео-стек: GDAL/OGR, rasterio, pyogrio, xarray/rioxarray, scipy.ndimage, scikit-image, matplotlib, laspy, pyproj — см. раздел «🌍 Гео-стек песочницы»
   - Автоматическая передача контекста между инструментами
   
 - **Улучшения AI-агента:**
@@ -531,6 +531,13 @@ docker compose exec backend python manage.py update_industrial_zones --bbox 80,5
 
 ## Обновления и дополнения
 
+### v0.0.14 (2026-09-25) — Удаление PDAL, упрощение сборки sandbox
+- 🗑️ **PDAL полностью удалён** из sandbox: компиляция C++ библиотеки PDAL из исходников вызывала перезагрузку системы при сборке образа, а в проекте PDAL использовался только как библиотека для AI-агента (сам код проекта PDAL не вызывает)
+- ✅ **Альтернатива — laspy**: `laspy[lazrs]==2.5.4` покрывает все операции с LAS/LAZ (чтение/запись, фильтрация, доступ к атрибутам) без компиляции C++ — устанавливается из готовых manylinux-колёс
+- 🐛 **Исправлена версия pyproj**: `3.8.1` → `3.8.0` (версии 3.8.1 не существует на PyPI)
+- ✅ **Добавлен setuptools/wheel** для сборки geo-пакетов из sdist (GDAL, rasterio, pyogrio)
+- ℹ️ Удалены все упоминания PDAL из `executor.py` (import, safe_globals, /libs endpoint) и документации
+
 ### v0.0.13 (2026-09-25) — Исправление сборки образа sandbox (E: Unable to locate package libhdfs3)
 - 🐛 **apt-этап `sandbox 2/10` падал** с ошибкой `Unable to locate package libhdfs3`: пакета `libhdfs3` нет в репозиториях Debian trixie (образ `python:3.12-slim`) — он распространялся только через сторонний репозиторий OneFS/Hortonworks и был удалён из Debian ещё в Buster
 - ✅ Пакет **`libhdfs3` удалён из Dockerfile**: доступ к HDFS песочнице не нужен (read-only sandbox без сети), а GDAL при сборке просто не включает драйвер HDFS — на остальной гео-стек это не влияет
@@ -538,9 +545,9 @@ docker compose exec backend python manage.py update_industrial_zones --bbox 80,5
 
 ### v0.0.12 (2026-09-25) — Полный гео-стек в песочнице: GDAL/PROJ, растровая наука, графики, LiDAR
 - ✅ **GDAL + PROJ системно** в образе sandbox: все растровые/векторные форматы (GeoTIFF, COG, JPEG2000, NetCDF, HDF5, Shapefile, GPKG, KML…), виртуальные ФС `/vsimem/`, `/vsizip/`, сетки трансформаций `proj-data` офлайн (`PROJ_NETWORK=OFF`)
-- ✅ **Python-библиотеки предимпортированы** в безопасные globals executor'а (код агента пишется без `import`): `gdal/ogr/osr`, `rasterio` (+`geometry_mask`, `rasterize`, `Resampling`), `pyogrio`, `xarray/rioxarray`, `netCDF4/h5py/h5netcdf`, `pyproj (CRS/Transformer/Geod/Proj)`, `scipy.ndimage/stats/signal`, `skimage.measure/morphology/filters`, `laspy/pdal`, `mercantile`, `geopy`
+- ✅ **Python-библиотеки предимпортированы** в безопасные globals executor'а (код агента пишется без `import`): `gdal/ogr/osr`, `rasterio` (+`geometry_mask`, `rasterize`, `Resampling`), `pyogrio`, `xarray/rioxarray`, `netCDF4/h5py/h5netcdf`, `pyproj (CRS/Transformer/Geod/Proj)`, `scipy.ndimage/stats/signal`, `skimage.measure/morphology/filters`, `laspy`, `mercantile`, `geopy`
 - ✅ **matplotlib + контракт `__charts__`**: агент возвращает графики/картограммы PNG (base64) вместе с GeoJSON из `__result__`; бэкенд пробрасывает их в чат; шрифты и `MPLCONFIGDIR` подготовлены на этапе сборки (совместимо с read-only ФС)
-- ✅ **LiDAR-стек**: LasZip + LAZperf собраны из исходников, PDAL 3.4.1 с драйверами LAS/LAZ (проверка `pdal --drivers` на сборке), pip-обёртка PDAL привязана к версии системной библиотеки, laspy 2.x + экстра `laszip` для чтения LAZ
+- ✅ **LiDAR-стек**: LasZip собран из исходников, laspy 2.5.4 + экстра `lazrs` для чтения/записи LAZ (сжатие LAZ через lazrs — самодостаточное manylinux-колесо без компиляции C++)
 - ✅ **Загрузка геоданных в БД через GDAL**: драйвер **PGDump** доступен в песочнице в режиме генерации SQL (`PG_DUMP=ON` + `/vsimem/`) — агент конвертирует Shapefile/GPKG/KML/CSV в скрипт импорта, который бэкенд применяет к PostGIS (сама песочница без сети, прямых коннектов не делает); geoalchemy2 в образе — для сериализации геометрий
 - ✅ **RAM лимит увеличен 512 MB → 1.5 GB** (лимиты docker-compose и `RLIMIT_AS` в executor.py синхронно) — под растровые операции
 - ✅ **Tool description и SANDBOX INSTRUCTIONS LLM обновлены**: полный список библиотек, советы по проекциям (буферы в метрах через UTM, Geod для площадей), пример workflow «вектор пожара → маска растра → NBR → binary_opening → кластеры label+regionprops → GeoJSON + график», запрет network/`/vsicurl/`
@@ -712,7 +719,7 @@ docker compose exec backend python manage.py update_industrial_zones --bbox 80,5
     *Пример:* «Построй буфер 20 км вокруг точки 37.6, 55.7 и посчитай его площадь»
 18. **`analyze_fire_risk`** — оценка риска для населённых пунктов.
     *Пример:* «Насколько велик риск для посёлков от пожаров в bbox 75,55,110,75?»
-19. **`execute_python`** — выполнение кода в изолированном sandbox с полным гео-стеком (GDAL/OGR, rasterio, scipy.ndimage, scikit-image, matplotlib `__charts__`, PDAL/laspy, pyproj). Загрузка данных в PostGIS — генерацией PGDump-скрипта через драйвер GDAL PGDump прямо в коде песочницы.
+19. **`execute_python`** — выполнение кода в изолированном sandbox с полным гео-стеком (GDAL/OGR, rasterio, scipy.ndimage, scikit-image, matplotlib `__charts__`, laspy, pyproj). Загрузка данных в PostGIS — генерацией PGDump-скрипта через драйвер GDAL PGDump прямо в коде песочницы.
     *Пример:* «Посчитай среднее и медиану FRP по последним найденным пожарам и построй гистограмму распределения по дням»
 
 
@@ -733,7 +740,7 @@ AI-агент выполняет пользовательский Python-код 
 | **geopandas** (`gpd`) | Векторный анализ: буферы, оверлеи (`overlay`), пространственные джойны (`sjoin`), импорт/экспорт Shapefile/GPKG/GeoJSON, `to_postgis()` |
 | **xarray + rioxarray** (`xr`) | Многомерные массивы (временные ряды снимков, климатические данные), метки осей, срезы по времени/пространству |
 | **netCDF4 / h5py / h5netcdf** | Прямое чтение ERA5/MODIS/климатических файлов NetCDF и HDF5 |
-| **laspy + laszip + PDAL** (`pdal`) | Облака точек LiDAR: LAS/LAZ (сжатие LAZ через системные LasZip/LAZperf), фильтры PDAL (ground classification, шумодавка, статистика высот) |
+| **laspy + laszip + lazrs** | Облака точек LiDAR: чтение/запись LAS/LAZ (сжатие LAZ через lazrs), фильтрация по классам, статистика высот, доступ к атрибутам (X, Y, Z, intensity, classification) |
 | **mercantile** | XYZ-тайлы: bbox → список тайлов, tile → границы |
 | **rio-cogeo** | Валидация и создание Cloud Optimized GeoTIFF |
 
@@ -827,7 +834,7 @@ print(data.decode())                                 # бэкенд/операт
 ### Анализ гарей и LiDAR
 - *«Для последних гарей выполни полный NBR-анализ: маска полигона → dNBR → удаление шума (binary_opening) → кластеры (label+regionprops) → покажи полигоны кластеров и диаграмму площадей»*
 - *«Раздели гари по категориям тяжести USGS (low/moderate/high) и построй круговую диаграмму распределения»*
-- *«Прочитай облако точек LiDAR (LAS), отфильтруй ground-классификацию через PDAL и построй гистограмму высот крон»*
+- *«Прочитай облако точек LiDAR (LAS), отфильтруй ground-классификацию через laspy и построй гистограмму высот крон»*
 
 ### Комбинированные сценарии
 - *«Найди пожары под Байкалом, для каждого оцени риск для ближайших деревень: буфер 5 км, пересечение с населёнными пунктами, отсортируй по числу затронутых жителей и построй маршруты выездов»*

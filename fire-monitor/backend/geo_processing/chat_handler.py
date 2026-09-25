@@ -550,11 +550,25 @@ SANDBOX INSTRUCTIONS (execute_python):
    - xarray (as xr) + rioxarray — labeled n-D arrays, raster clipping/warping/reprojection
    - mercantile — tile math (XYZ tiles, bbox -> tiles)
 3. Projection tips: reproject vectors with gdf.to_crs("EPSG:3857") or Transformer.from_crs(CRS.from_epsg(4326), CRS.from_epsg(3857), always_xy=True). Use Geod(ellps="WGS84").geometry_area_perimeter() for accurate areas in m2 instead of degree-based .area/.buffer. For buffers in meters, first reproject to an equal-area/local CRS (e.g. UTM zone via CRS.from_epsg).
-4. CRITICAL: DO NOT write 'import' or 'from ... import' statements — all libraries are pre-imported!
+4. CRITICAL: DO NOT write 'import' or 'from ... import' statements — all libraries are pre-imported! Use classes directly: LineString([...]), Point(...), Polygon(...), etc.
 5. NO network access is allowed. You cannot use requests, httpx, or fetch URLs. Remote rasters (/vsicurl/, https://) are unavailable; work with data passed via context.
 6. To pass data from previous tools, use the context parameter (max 10MB).
 7. To display results on map, assign GeoJSON to __result__ variable (must be WGS84 / EPSG:4326).
 8. Available builtins: round, abs, min, max, sum, sorted, enumerate, zip, map, filter, len, int, float, str, list, dict, tuple, set, print, and all standard exceptions.
+
+BUFFER EXAMPLES (use shapely, NOT ogr):
+User: "Create 30km buffer around a line"
+You:
+1. Call execute_python with code:
+   # Create line from coordinates
+   line = LineString([(20.15, 54.93), (20.51, 54.71), (21.82, 54.63)])
+   gdf = gpd.GeoDataFrame({'geometry': [line]}, crs='EPSG:4326')
+   # Reproject to UTM for metric buffer
+   gdf_utm = gdf.to_crs('EPSG:32634')
+   gdf_utm['geometry'] = gdf_utm.geometry.buffer(30000)  # 30km in meters
+   # Reproject back to WGS84
+   gdf_wgs = gdf_utm.to_crs('EPSG:4326')
+   __result__ = gdf_wgs.__geo_interface__
 
 MULTI-STEP WORKFLOWS:
 When user asks to "find fires AND filter/buffer/analyze them":

@@ -48,33 +48,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 #   колесо manylinux_2_17 cp312 статически линкует свой LasZip, ставится с PyPI
 #   без компиляции.
 # - lazperf: на PyPI выложен только sdist lazperf-1.5 — готовых колёс под
-#   cp312 нет, а sdist нерабочий: setup.py читает python/README.rst и
-#   python/CHANGES.rst, которых нет в архиве (ошибка сборки
-#   "FileNotFoundError: python/README.rst"). Системного python3-lazperf в
-#   Debian trixie тоже нет. Поэтому ставим lazrs — поддерживаемый
+#   cp312 нет, а sdist нерабочий. Поэтому ставим lazrs — поддерживаемый
 #   LAZ-декодер laspy (экстра "lazrs", самодостаточное manylinux-колесо):
 #   pip install "laspy[lazrs]==2.5.4" ниже.
-# - PDAL: pip-дистрибутив НЕ содержит бинарного CLI — это pybind11-расширение,
-#   которое собирается из исходников против установленной libpdal
-#   (scikit-build-core + find_package(PDAL)). Ставится блоком geo-пакетов
-#   вместе с GDAL==$(gdal-config --version).
+# laspy покрывает чтение/запись/фильтрацию LAS/LAZ без компиляции C++.
 RUN pip install --no-cache-dir "laszip==0.2.4" \
     && python -c "import laszip; print('laszip ok')"
-
-# Компилируем PDAL 3.5.4 из исходников: даёт и бинарник pdal (CLI), и CMake
-#-конфигурацию libpdal-python, необходимые для сборки pip-модуля pdal.
-# Пул временных файлов (build-essential/cmake/git) — в следующем RUN-блоке.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential cmake git ca-certificates \
-        libpdal-dev pdal \
-    && git clone --depth 1 --branch 3.5.4 \
-        https://github.com/PDAL/python.git /tmp/pdal-python \
-    && cmake -S /tmp/pdal-python -B /tmp/pdal-python/build -DCMAKE_BUILD_TYPE=Release \
-    && cmake --build /tmp/pdal-python/build --parallel \
-    && cmake --install /tmp/pdal-python/build \
-    && ldconfig \
-    && rm -rf /tmp/pdal-python /var/lib/apt/lists/* \
-    && pdal --version
 
 # Устанавливаем Python-пакеты поверх СИСТЕМНЫХ GDAL/PROJ из Debian:
 # - C extensions собираем из исходников (build isolation отключен, чтобы
@@ -92,7 +71,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         pandas==2.2.3 \
         shapely==2.0.6 \
         slowapi==0.1.9 \
-        pyproj==3.8.1 \
+        pyproj==3.8.0 \
         geopy==2.4.1 \
         xarray==2025.1.2 \
         scipy==1.13.1 \
@@ -100,6 +79,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         matplotlib==3.9.2 \
     # geo-пакеты, требующие сборки против системных библиотек
     # (gdal-config задаёт версию GDAL == версии C-библиотеки в образе)
+    # setuptools нужен для сборки GDAL/rasterio/pyogrio из sdist
+    && pip install --no-cache-dir setuptools wheel \
     && pip install --no-cache-dir --no-build-isolation \
         GDAL==$(gdal-config --version) \
         rasterio==1.3.11 \
@@ -107,7 +88,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         netCDF4==1.7.2 \
         h5py==3.12.1 \
         h5netcdf==1.6.1 \
-        PDAL==$(pdal --version | sed 's/[^0-9.]//g') \
     # чистые Python пакеты (зависимые от gdal/rasterio API)
     && pip install --no-cache-dir \
         geopandas==1.0.1 \
@@ -115,7 +95,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         rio-cogeo==5.3.1 \
         geoalchemy2==0.15.2 \
         mercantile==1.2.1 \
-        laspy==2.5.4 \
+        "laspy[lazrs]==2.5.4" \
         cligj>=0.5 \
         click-plugins \
         pyparsing \
