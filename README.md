@@ -731,6 +731,9 @@ docker compose exec backend python manage.py update_industrial_zones --bbox 80,5
 ### 🧮 Анализ и Python
 17. **`spatial_analysis`** — геометрические операции (буфер, пересечение и т.д.).
     *Пример:* «Построй буфер 20 км вокруг точки 37.6, 55.7 и посчитай его площадь»
+
+![Инструмент буфер](./images/Инструмент%20буфер.png)
+
 18. **`analyze_fire_risk`** — оценка риска для населённых пунктов.
     *Пример:* «Насколько велик риск для посёлков от пожаров в bbox 75,55,110,75?»
 19. **`execute_python`** — выполнение кода в изолированном sandbox с полным гео-стеком (GDAL/OGR, rasterio, scipy.ndimage, scikit-image, matplotlib `__charts__`, laspy, pyproj). Загрузка данных в PostGIS — генерацией PGDump-скрипта через драйвер GDAL PGDump прямо в коде песочницы.
