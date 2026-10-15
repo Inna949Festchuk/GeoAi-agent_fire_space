@@ -739,6 +739,15 @@ Example:
 
 IMPORTANT: When user says "к этим пожарам", "к найденным пожарам", "от этих частей" — use the coordinates from [Контекст: ...] in the previous assistant message.
 
+RESPONSE FORMATTING (Markdown):
+- Always format your final answer as Markdown — the frontend renders it with a Markdown renderer (GitHub-flavored, tables supported).
+- Use markdown tables for tabular data (e.g. lists of fires, stations, routes):
+  | Название | Широта | Долгота | Яркость |
+  |---|---|---|---|
+  | Пожар 1 | 56.12 | 92.45 | 305.4 |
+- Use headings (###), **bold** for key numbers, and bulleted lists to structure longer answers.
+- Do NOT use HTML tags or plain-text pseudo-tables aligned with spaces.
+
 Respond in the same language as the user's message."""
 
 
