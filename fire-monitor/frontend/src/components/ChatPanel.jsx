@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { sendMessage } from '../api/client'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import ResultsVisualization from './ResultsVisualization'
 
 function ChatPanel({ bbox, onResponse, onLayerAction }) {
@@ -85,6 +86,10 @@ function ChatPanel({ bbox, onResponse, onLayerAction }) {
             {msg.role === 'assistant' ? (
               <>
                 <ReactMarkdown
+                  // remark-gfm включает поддержку GitHub Markdown:
+                  // таблицы, зачёркивание, списки задач — иначе таблицы
+                  // из ответа ИИ рендерятся как обычный текст
+                  remarkPlugins={[remarkGfm]}
                   components={{
                     table: ({node, ...props}) => (
                       <div style={{overflowX: 'auto'}}>
