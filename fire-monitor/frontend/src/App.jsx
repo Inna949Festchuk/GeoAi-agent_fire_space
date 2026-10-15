@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import MapView from './components/MapView'
 import ChatPanel from './components/ChatPanel'
 import LayerPanel from './components/LayerPanel'
-import { fetchFires, fetchBurns, fetchStats } from './api/client'
+import { fetchFires, fetchBurns, fetchStats, fetchLatestBurnJob } from './api/client'
 
 // Ключи для localStorage
 const STORAGE_KEYS = {
@@ -36,6 +36,8 @@ function App() {
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(false)
   const [bbox, setBbox] = useState(null)
+  const [chatBusy, setChatBusy] = useState(false)
+  const [burnJob, setBurnJob] = useState(null)
 
   // Состояния видимости слоёв (с сохранением в localStorage)
   const [showFires, setShowFires] = useState(() => getStoredBool(STORAGE_KEYS.SHOW_FIRES, true))
@@ -121,6 +123,40 @@ function App() {
   const handleMapMove = (newBbox) => {
     setBbox(newBbox)
   }
+
+  // Пока чат обрабатывает запрос (мульти-тайловое картирование гарей идёт
+  // несколько минут), периодически обновляем слой гарей из БД и прогресс
+  // джобы — полигоны появляются на карте по мере готовности тайлов.
+  useEffect(() => {
+    if (!chatBusy) return
+    let cancelled = false
+    const poll = async () => {
+      try {
+        const searchBbox = bbox || [75, 55, 110, 75]
+        const [burns, job] = await Promise.all([
+          fetchBurns({ bbox: searchBbox }),
+          fetchLatestBurnJob(),
+        ])
+        if (cancelled) return
+        setBurnData(burns)
+        setBurnJob(job)
+      } catch (err) {
+        console.error('Burn progress poll failed:', err)
+      }
+    }
+    const timeout = setTimeout(poll, 2000)
+    const interval = setInterval(poll, 15000)
+    return () => {
+      cancelled = true
+      clearTimeout(timeout)
+      clearInterval(interval)
+    }
+  }, [chatBusy, bbox])
+
+  const handleChatStateChange = useCallback((busy) => {
+    setChatBusy(busy)
+    if (!busy) setBurnJob(null)
+  }, [])
 
   // Обработка команд управления слоями от AI-агента
   const handleLayerAction = (action) => {
@@ -247,6 +283,8 @@ function App() {
           bbox={bbox}
           onResponse={handleChatResponse}
           onLayerAction={handleLayerAction}
+          onChatStateChange={handleChatStateChange}
+          jobProgress={burnJob}
         />
       </div>
     </div>

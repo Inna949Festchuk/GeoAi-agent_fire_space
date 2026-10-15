@@ -3,7 +3,7 @@ import { sendMessage } from '../api/client'
 import ReactMarkdown from 'react-markdown'
 import ResultsVisualization from './ResultsVisualization'
 
-function ChatPanel({ bbox, onResponse, onLayerAction }) {
+function ChatPanel({ bbox, onResponse, onLayerAction, onChatStateChange, jobProgress }) {
   const [messages, setMessages] = useState([
     {
       role: 'system',
@@ -25,6 +25,7 @@ function ChatPanel({ bbox, onResponse, onLayerAction }) {
     setMessages((prev) => [...prev, { role: 'user', content: text }])
     setInput('')
     setLoading(true)
+    onChatStateChange?.(true)
 
     try {
       // История разговора для multi-turn контекста: только реплики user/assistant
@@ -67,6 +68,7 @@ function ChatPanel({ bbox, onResponse, onLayerAction }) {
       ])
     } finally {
       setLoading(false)
+      onChatStateChange?.(false)
     }
   }
 
@@ -125,7 +127,9 @@ function ChatPanel({ bbox, onResponse, onLayerAction }) {
         {loading && (
           <div className="loading">
             <div className="spinner" />
-            Анализирую данные...
+            {jobProgress?.result_summary?.status === 'running'
+              ? `Картирование гарей: ${jobProgress.result_summary.tiles_done}/${jobProgress.result_summary.tiles_total} тайлов, ${jobProgress.result_summary.total_burned_ha_so_far} га — полигоны появляются на карте`
+              : 'Анализирую данные...'}
           </div>
         )}
         <div ref={messagesEndRef} />

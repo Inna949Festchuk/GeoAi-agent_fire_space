@@ -280,22 +280,22 @@ TOOLS = [
         'type': 'function',
         'function': {
             'name': 'map_burn_area',
-            'description': 'Map burn severity using Sentinel-2 dNBR analysis. Requires pre-fire and post-fire dates. Returns burn area polygons with severity classification. IMPORTANT: bbox must be max 30° × 30° (approx 3000km × 3000km). For larger regions, split into multiple calls or ask user to specify a smaller area.',
+            'description': 'Map burn severity (dNBR) using Sentinel-2 imagery. Analyzes ALL Sentinel-2 tiles (~100x100 km) covering the bbox, up to 16 tiles per call. Requires pre_date (before the fire period) and post_date (after it) — fires between the selected scene dates are detected in one pass. For regions wider than ~2-3 degrees, split the bbox into cells of ~2-3° each and call the tool per cell. Returns burn polygons with severity classification and a coverage summary (tiles_processed/tiles_total). IMPORTANT: bbox must be max 30° × 30°.',
             'parameters': {
                 'type': 'object',
                 'properties': {
                     'bbox': {
                         'type': 'array',
                         'items': {'type': 'number'},
-                        'description': 'Bounding box [minx, miny, maxx, maxy] in WGS84. MUST be max 30° × 30° (e.g., [79, 71, 109, 101]). For larger regions, split into multiple calls.',
+                        'description': 'Bounding box [minx, miny, maxx, maxy] in WGS84. MUST be max 30° × 30°. For wider regions, split into cells of ~2-3° each and call the tool per cell.',
                     },
                     'pre_date': {
                         'type': 'string',
-                        'description': 'Pre-fire date (YYYY-MM-DD) - before the fire',
+                        'description': 'Pre-fire date (YYYY-MM-DD) — a date BEFORE the fire period (fires start after it)',
                     },
                     'post_date': {
                         'type': 'string',
-                        'description': 'Post-fire date (YYYY-MM-DD) - after the fire',
+                        'description': 'Post-fire date (YYYY-MM-DD) — a date AFTER the fire period',
                     },
                     'max_cloud_cover': {
                         'type': 'integer',
@@ -310,7 +310,7 @@ TOOLS = [
         'type': 'function',
         'function': {
             'name': 'generate_burn_report',
-            'description': 'Generate a comprehensive analytical report for burn severity analysis. Includes severity distribution, summary statistics, and data quality metrics. Requires existing burn area data in the database.',
+            'description': 'Generate a comprehensive analytical report for burn severity analysis. Includes severity distribution, summary statistics, and data quality metrics. The report summarizes burn polygons already in the database: if the user asks for a fresh analysis, call map_burn_area first, then this tool.',
             'parameters': {
                 'type': 'object',
                 'properties': {
@@ -511,25 +511,22 @@ SYSTEM_PROMPT = """You are a wildfire monitoring AI assistant. You help users tr
 analyze burn severity, and understand fire danger. You have access to satellite data from VIIRS,
 MODIS, and Sentinel-2.
 
-CRITICAL CONSTRAINT: Burn severity mapping (map_burn_area) has a bbox limit of 30° × 30° (approx 3000km × 3000km).
-For large regions like "Siberia", "Russia", or entire countries:
-- DO NOT use the full region bbox for map_burn_area
-- Instead, either:
-  1. Ask the user to specify a smaller area (e.g., "Which part of Siberia? Please provide coordinates or a specific region")
-  2. Use a representative 30° × 30° bbox centered on the region if the user doesn't specify
-  3. For search_fires, you can use larger bboxes (up to 30° × 30°)
+BURN MAPPING (map_burn_area) RULES:
+- map_burn_area processes ALL Sentinel-2 tiles (~100x100 km each) covering the bbox, up to 16 tiles per call.
+- For regions wider than ~2-3 degrees (roughly 300 km), SPLIT the bbox into cells of max ~2-3 degrees each and call map_burn_area once per cell (up to 3-4 calls), using the same pre_date/post_date for all cells.
+- ALWAYS run map_burn_area BEFORE generate_burn_report: the report only summarizes burn polygons already in the database for the given bbox and dates.
+- After mapping, summarize for the user: total burned area, severity breakdown, and coverage from the tool result (tiles_processed / tiles_total).
+- The map will display burn polygons with severity colors.
 
 When the user asks about fires in a region:
-1. Use search_fires to find active hotspots (can use larger bbox)
+1. Use search_fires to find active hotspots (can use larger bbox, up to 30° × 30°)
 2. Summarize the results: number of fires, confidence levels, brightness
-3. If the user asks about burn area, explain the bbox limitation and ask for a specific area OR use a centered 30° × 30° bbox
+3. If the user asks about burn area, proceed with map_burn_area per the rules above
 
-When the user asks about burn severity or burned areas:
-1. Check if the requested region fits within 30° × 30°
-2. If too large, ask for clarification or use a centered bbox
-3. Use map_burn_area with appropriate bbox (max 30° × 30°) and dates
-4. Summarize the results: total burned area, severity breakdown
-5. The map will display burn polygons with severity colors
+When the user asks for a burn report ("сгенерируй отчёт по гарям", "покажи гари за период"):
+1. Call map_burn_area for the region and period first (split large regions into cells of ~2-3°)
+2. Then call generate_burn_report with the same bbox and dates
+3. Summarize the report: total burned area, severity distribution, data quality
 
 Always provide context about data sources and limitations.
 Fire hotspot locations are approximate (375m for VIIRS, 1km for MODIS).
@@ -995,9 +992,7 @@ def execute_tool(name, args, context_bbox=None):
         }
 
     elif name == 'map_burn_area':
-        from .stac_client import get_sentinel2_assets, get_scl_asset
-        from .burn_severity import process_sentinel2_burn
-        from fires.models import BurnArea
+        from .burn_mapping import map_burns_multitile
 
         pre_date = args.get('pre_date')
         post_date = args.get('post_date')
@@ -1007,186 +1002,17 @@ def execute_tool(name, args, context_bbox=None):
             return {'summary': {'error': 'pre_date and post_date are required'}}
 
         try:
-            # Search for pre-fire Sentinel-2 scenes (search in range: pre_date - 15 days to pre_date)
-            from datetime import timedelta
-            pre_date_obj = datetime.strptime(pre_date, '%Y-%m-%d').date()
-            pre_date_start = (pre_date_obj - timedelta(days=15)).isoformat()
-            
-            pre_scenes = search_sentinel2(
+            return map_burns_multitile(
                 bbox=bbox,
-                start_date=pre_date_start,
-                end_date=pre_date,
+                pre_date=pre_date,
+                post_date=post_date,
                 max_cloud_cover=max_cloud_cover,
-                limit=5,
             )
-
-            if not pre_scenes:
-                return {'summary': {'error': f'No pre-fire Sentinel-2 scenes found for {pre_date_start} to {pre_date}'}}
-
-            # Select best pre-fire scene (lowest cloud cover)
-            pre_scene = min(pre_scenes, key=lambda s: s.properties.get('eo:cloud_cover', 100))
-
-            # Search for post-fire Sentinel-2 scenes (search in range: post_date to post_date + 15 days)
-            post_date_obj = datetime.strptime(post_date, '%Y-%m-%d').date()
-            post_date_end = (post_date_obj + timedelta(days=15)).isoformat()
-            
-            post_scenes = search_sentinel2(
-                bbox=bbox,
-                start_date=post_date,
-                end_date=post_date_end,
-                max_cloud_cover=max_cloud_cover,
-                limit=5,
-            )
-
-            if not post_scenes:
-                return {'summary': {'error': f'No post-fire Sentinel-2 scenes found for {post_date} to {post_date_end}'}}
-
-            # Select best post-fire scene (lowest cloud cover)
-            post_scene = min(post_scenes, key=lambda s: s.properties.get('eo:cloud_cover', 100))
-
-            # Get signed asset URLs
-            pre_assets = get_sentinel2_assets(pre_scene, bands=['B08', 'B12'])
-            post_assets = get_sentinel2_assets(post_scene, bands=['B08', 'B12'])
-
-            # Get SCL assets for cloud masking
-            pre_scl_url = get_scl_asset(pre_scene)
-            post_scl_url = get_scl_asset(post_scene)
-
-            # Process burn severity with cloud masking
-            result = process_sentinel2_burn(
-                pre_assets=pre_assets,
-                post_assets=post_assets,
-                bbox=bbox,
-                n_classes=4,
-                pre_scl_url=pre_scl_url,
-                post_scl_url=post_scl_url,
-                apply_cloud_masking=True,
-            )
-
-            stats = result['stats']
-            severity_data = result['severity']
-            transform = result['transform']
-            source_crs = result['crs']
-
-            # Vectorize and save burn polygons to database
-            from django.contrib.gis.geos import Polygon as DjangoPolygon, GEOSGeometry
-            from rasterio.features import shapes
-            from shapely.geometry import shape
-            from shapely.ops import unary_union
-            import numpy as np
-
-            # Create transformer for reprojection to WGS84
-            transformer = Transformer.from_crs(source_crs, "EPSG:4326", always_xy=True)
-            project = lambda x, y: transformer.transform(x, y)
-
-            # Optimization parameters
-            min_area_ha = 1.0
-            simplify_tolerance = 0.005
-            downsample_factor = 4
-
-            # Calculate area conversion factor
-            avg_lat = (bbox[1] + bbox[3]) / 2
-            lat_rad = np.radians(avg_lat)
-            deg_to_m_lat = 111000
-            deg_to_m_lon = 111000 * np.cos(lat_rad)
-            deg2_to_ha = (deg_to_m_lat * deg_to_m_lon) / 10000
-
-            features = []
-            for severity_class in ['low', 'moderate', 'high']:
-                if severity_class not in stats or stats[severity_class]['area_ha'] == 0:
-                    continue
-
-                # Create mask and downsample
-                mask = (severity_data == severity_class).astype(np.uint8)
-                if downsample_factor > 1:
-                    mask_downsampled = mask[::downsample_factor, ::downsample_factor]
-                    downsampled_transform = transform * transform.scale(downsample_factor, downsample_factor)
-                else:
-                    mask_downsampled = mask
-                    downsampled_transform = transform
-
-                # Vectorize
-                polygons = []
-                for geom, value in shapes(mask_downsampled.astype(np.uint8), transform=downsampled_transform):
-                    if value == 1:
-                        try:
-                            poly = shape(geom)
-                            if poly.is_valid and poly.area > 0:
-                                area_ha = poly.area * deg2_to_ha
-                                if area_ha >= min_area_ha:
-                                    polygons.append(poly)
-                        except Exception:
-                            continue
-
-                if not polygons:
-                    continue
-
-                # Merge and simplify
-                merged = unary_union(polygons)
-                merged = merged.simplify(simplify_tolerance, preserve_topology=True)
-
-                # Reproject from UTM to WGS84
-                merged_wgs84 = shapely_transform(project, merged)
-
-                # Save to database
-                try:
-                    if merged_wgs84.geom_type == 'Polygon':
-                        geos_geom = GEOSGeometry(merged_wgs84.wkt, srid=4326)
-                    elif merged_wgs84.geom_type == 'MultiPolygon':
-                        geos_geom = GEOSGeometry(merged_wgs84.wkt, srid=4326)
-                    else:
-                        continue
-
-                    burn_area = BurnArea.objects.create(
-                        geometry=geos_geom,
-                        area_ha=stats[severity_class]['area_ha'],
-                        severity=severity_class,
-                        dnbr_mean=stats[severity_class]['mean_dnbr'],
-                        pre_date=pre_date,
-                        post_date=post_date,
-                        satellite='Sentinel-2',
-                        tile_id=pre_scene.id,
-                    )
-
-                    features.append({
-                        'type': 'Feature',
-                        'geometry': json.loads(burn_area.geometry.geojson),
-                        'properties': {
-                            'severity': burn_area.severity,
-                            'area_ha': burn_area.area_ha,
-                            'mean_dnbr': burn_area.dnbr_mean,
-                            'pre_date': str(burn_area.pre_date),
-                            'post_date': str(burn_area.post_date),
-                        },
-                    })
-                except Exception as e:
-                    logger.error(f'Failed to save burn area: {e}')
-                    continue
-
-            return {
-                'geojson': {
-                    'type': 'FeatureCollection',
-                    'features': features,
-                },
-                'data_type': 'burn',
-                'summary': {
-                    'total_burned_ha': stats['total_burned_ha'],
-                    'by_severity': {
-                        k: {'area_ha': v['area_ha'], 'mean_dnbr': v['mean_dnbr']}
-                        for k, v in stats.items()
-                        if k != 'total_burned_ha'
-                    },
-                    'pre_scene': pre_scene.id,
-                    'post_scene': post_scene.id,
-                    'pre_date': pre_date,
-                    'post_date': post_date,
-                    'polygons_loaded': len(features),
-                },
-            }
-
+        except ValueError as e:
+            return {'summary': {'error': str(e)}}
         except Exception as e:
             logger.exception('Burn mapping failed')
-            return {'summary': {'error': f'Burn mapping failed: {str(e)}'}}
+            return {'summary': {'error': 'Burn mapping failed: ' + str(e)}}
 
     elif name == 'generate_burn_report':
         from .report_generator import BurnReportGenerator
@@ -1207,7 +1033,14 @@ def execute_tool(name, args, context_bbox=None):
             )
 
             if 'error' in report_data:
-                return {'summary': {'error': report_data['error']}}
+                summary = {'error': report_data['error']}
+                if 'No burn areas found' in report_data['error']:
+                    summary['hint'] = (
+                        'No burn polygons in the database for this bbox and dates. '
+                        f'Call map_burn_area first with the same bbox and dates (pre_date={date_from}, post_date={date_to}), '
+                        'then call generate_burn_report again.'
+                    )
+                return {'summary': summary}
 
             # Format summary for LLM
             summary = report_data['summary']

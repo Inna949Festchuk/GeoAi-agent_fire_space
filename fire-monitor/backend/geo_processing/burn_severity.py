@@ -14,6 +14,7 @@ Severity classification (USGS standard):
 """
 
 import logging
+import math
 import numpy as np
 import rasterio
 from rasterio.windows import from_bounds
@@ -59,8 +60,8 @@ def calculate_nbr(nir_band, swir2_band):
     Returns:
         numpy array of NBR values (-1 to 1), NaN where input was NaN
     """
-    nir = nir_band.astype(float)
-    swir2 = swir2_band.astype(float)
+    nir = nir_band.astype(np.float32)
+    swir2 = swir2_band.astype(np.float32)
 
     denominator = nir + swir2
     # Use np.where to handle NaN properly
@@ -189,7 +190,7 @@ def apply_cloud_mask(band, scl, cloud_threshold=8):
     Returns:
         numpy array with cloud pixels set to NaN
     """
-    masked = band.copy().astype(float)
+    masked = band.copy().astype(np.float32)
 
     # Create cloud mask (SCL >= 8 indicates clouds/cirrus)
     cloud_mask = scl >= cloud_threshold
@@ -286,27 +287,35 @@ def process_sentinel2_burn(
                     rasterio.windows.Window(0, 0, src_nir.width, src_nir.height)
                 )
 
+                if window_nir.width < 1 or window_nir.height < 1:
+                    raise ValueError(f'Tile window is empty for {label}-fire scene (no overlap with bbox)')
+
                 # Calculate target size and determine if downsampling is needed
                 target_width = int(window_nir.width)
                 target_height = int(window_nir.height)
                 max_dimension = 3000  # Limit to 3000x3000 pixels max
 
                 if target_width > max_dimension or target_height > max_dimension:
-                    # Calculate downsample factor
-                    downsample = max(target_width // max_dimension, target_height // max_dimension)
+                    # Ceiling division: guarantees the result is <= max_dimension
+                    # pixels. Floor division let 3000-6000px windows through with
+                    # factor 1 (no downsampling at all) -> OOM on large regions.
+                    downsample = max(1, math.ceil(max(target_width, target_height) / max_dimension))
                     print(f"[DEBUG burn_severity] Downsampling by factor {downsample} (original: {target_width}x{target_height})")
 
-                    # Read with downsampling
-                    out_shape = (target_height // downsample, target_width // downsample)
-                    nir = src_nir.read(1, window=window_nir, out_shape=out_shape, resampling=rasterio.enums.Resampling.average).astype(float) / 10000
+                    # Read with downsampling (float32: halves memory vs float64,
+                    # precision is enough for NBR/dNBR on 14-bit reflectance).
+                    # max(1, ...): thin edge windows (e.g. 2px slivers) must not
+                    # collapse to a zero-size array.
+                    out_shape = (max(1, target_height // downsample), max(1, target_width // downsample))
+                    nir = src_nir.read(1, window=window_nir, out_shape=out_shape, resampling=rasterio.enums.Resampling.average).astype(np.float32) / 10000
 
                     # Read SWIR2 with same downsampling
                     window_swir = from_bounds(*bbox_utm, transform=src_swir.transform)
                     window_swir = window_swir.intersection(
                         rasterio.windows.Window(0, 0, src_swir.width, src_swir.height)
                     )
-                    swir2_out_shape = (out_shape[0] // 2, out_shape[1] // 2)  # SWIR2 is 20m, so half the size
-                    swir2 = src_swir.read(1, window=window_swir, out_shape=swir2_out_shape, resampling=rasterio.enums.Resampling.average).astype(float) / 10000
+                    swir2_out_shape = (max(1, out_shape[0] // 2), max(1, out_shape[1] // 2))  # SWIR2 is 20m, so half the size
+                    swir2 = src_swir.read(1, window=window_swir, out_shape=swir2_out_shape, resampling=rasterio.enums.Resampling.average).astype(np.float32) / 10000
 
                     # Resize SWIR2 to match NIR
                     swir2_up = np.repeat(np.repeat(swir2, 2, axis=0), 2, axis=1)
@@ -339,14 +348,14 @@ def process_sentinel2_burn(
                     transform = transform * transform.scale(downsample, downsample)
                 else:
                     # No downsampling needed, read at full resolution
-                    nir = src_nir.read(1, window=window_nir).astype(float) / 10000
+                    nir = src_nir.read(1, window=window_nir).astype(np.float32) / 10000
 
                     # Read SWIR2 band (20m resolution) with window
                     window_swir = from_bounds(*bbox_utm, transform=src_swir.transform)
                     window_swir = window_swir.intersection(
                         rasterio.windows.Window(0, 0, src_swir.width, src_swir.height)
                     )
-                    swir2 = src_swir.read(1, window=window_swir).astype(float) / 10000
+                    swir2 = src_swir.read(1, window=window_swir).astype(np.float32) / 10000
 
                     # Resize SWIR2 to match NIR
                     swir2_up = np.repeat(np.repeat(swir2, 2, axis=0), 2, axis=1)
@@ -364,7 +373,8 @@ def process_sentinel2_burn(
                                 window_scl = window_scl.intersection(
                                     rasterio.windows.Window(0, 0, src_scl.width, src_scl.height)
                                 )
-                                scl = src_scl.read(1, window=window_scl).astype(float) / 10000
+                                # SCL is a class band (0-11), no reflectance rescaling
+                                scl = src_scl.read(1, window=window_scl).astype(float)
                                 # Resize to match NIR
                                 scl_up = np.repeat(np.repeat(scl, 2, axis=0), 2, axis=1)
                                 scl = scl_up[:min_h, :min_w]
@@ -378,8 +388,8 @@ def process_sentinel2_burn(
                 print(f"[DEBUG burn_severity] Final NIR shape: {nir.shape}, SWIR shape: {swir2.shape}")
             else:
                 # Read full image - need to resample SWIR2 to match NIR resolution
-                nir = src_nir.read(1).astype(float) / 10000
-                swir2_full = src_swir.read(1).astype(float) / 10000
+                nir = src_nir.read(1).astype(np.float32) / 10000
+                swir2_full = src_swir.read(1).astype(np.float32) / 10000
                 # Double SWIR2 resolution to match NIR (20m -> 10m)
                 swir2 = np.repeat(np.repeat(swir2_full, 2, axis=0), 2, axis=1)
                 # Crop to match NIR exactly
@@ -414,6 +424,17 @@ def process_sentinel2_burn(
                 'transform': transform,
                 'crs': src_nir.crs,
             }
+
+            # Free large arrays before loading the next scene (memory optimization:
+            # full-size windows can be 100-200 MB each; 3 parallel workers amplify it)
+            try:
+                del nir, swir2, swir2_up
+            except NameError:
+                pass
+            try:
+                del scl, scl_up
+            except NameError:
+                pass
 
     # Ensure pre and post have the same shape
     pre_nbr = results['pre']['nbr']

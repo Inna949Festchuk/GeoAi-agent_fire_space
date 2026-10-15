@@ -39,6 +39,12 @@ services:
       - FIRMS_API_KEY=${FIRMS_API_KEY}
       - PYTHONUNBUFFERED=1
       - SANDBOX_URL=http://sandbox:8002/execute
+      - BURN_MAX_TILES=${BURN_MAX_TILES:-16}
+      - BURN_SCENE_WINDOW_DAYS=${BURN_SCENE_WINDOW_DAYS:-15}
+      - BURN_PARALLEL_TILES=${BURN_PARALLEL_TILES:-3}
+      - BURN_RETRY_DELAYS=${BURN_RETRY_DELAYS:-15,30,60}
+      - GDAL_HTTP_CONNECTTIMEOUT=${GDAL_HTTP_CONNECTTIMEOUT:-30}
+      - GDAL_HTTP_TIMEOUT=${GDAL_HTTP_TIMEOUT:-300}
     volumes:
       - ./backend:/app
     ports:
@@ -49,6 +55,10 @@ services:
     networks:
       - default
       - sandbox_internal
+    deploy:
+      resources:
+        limits:
+          memory: 4g
 
   mcp_server:
     build:

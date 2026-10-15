@@ -164,3 +164,11 @@ LLM_REQUEST_TIMEOUT = int(os.environ.get('LLM_REQUEST_TIMEOUT', '180'))  # 3 min
 
 # NASA FIRMS API
 FIRMS_API_KEY = os.environ.get('FIRMS_API_KEY', '')
+
+# Burn mapping (multi-tile Sentinel-2 dNBR)
+BURN_MAX_TILES = int(os.environ.get('BURN_MAX_TILES', '16'))
+BURN_SCENE_WINDOW_DAYS = int(os.environ.get('BURN_SCENE_WINDOW_DAYS', '15'))
+# Parallel tile processing (keep modest to avoid Planetary Computer throttling)
+BURN_PARALLEL_TILES = int(os.environ.get('BURN_PARALLEL_TILES', '3'))
+# Retry delays (seconds) on transient HTTP errors 403/429/5xx from the data source
+BURN_RETRY_DELAYS = [int(x) for x in os.environ.get('BURN_RETRY_DELAYS', '15,30,60').split(',')]

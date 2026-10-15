@@ -170,11 +170,11 @@ MCP URL: http://localhost:8001/mcp
 
 ### Поиск и анализ
 - `search_fires(bbox, source, days)` — поиск очагов
-- `search_sentinel2(bbox, start_date, end_date)` — поиск сцен Sentinel-2
+- `search_sentinel2(bbox, start_date, end_date)` — поиск доступных сцен Sentinel-2 (с разбивкой по тайлам)
 - `get_fire_stats(bbox, days)` — статистика пожаров
 - `get_burn_stats(bbox)` — статистика гарей
 - `start_fire_detection(bbox)` — запуск детекции пожаров
-- `start_burn_mapping(bbox, pre_date, post_date)` — картирование гарей
+- `start_burn_mapping(bbox, pre_date, post_date)` — мульти-тайловое картирование гарей (синхронно, до 16 тайлов)
 
 ### Маршрутизация и геолокация
 - `build_route_mcp(start_lon, start_lat, end_lon, end_lat)` — построение маршрута по дорогам через OSRM
@@ -300,13 +300,22 @@ curl http://localhost:8000/api/stats/
 ### 2. Картирование гарей
 
 ```bash
-# Анализ выгорания (с автоматическим cloud masking)
+# Анализ выгорания (мульти-тайловый dNBR, с автоматическим cloud masking)
 curl -X POST http://localhost:8000/api/map-burns/ \
   -H "Content-Type: application/json" \
   -d '{
     "bbox": [79, 71, 82, 74],
     "pre_date": "2025-06-01",
     "post_date": "2025-07-31"
+  }'
+
+# Поиск доступных сцен Sentinel-2 (разбивка по тайлам)
+curl -X POST http://localhost:8000/api/sentinel2/search/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "bbox": [79, 71, 82, 74],
+    "start_date": "2025-06-01",
+    "end_date": "2025-06-15"
   }'
 
 # Получить сохранённые гари из БД
@@ -396,7 +405,7 @@ docker compose exec backend python manage.py fetch_fires --bbox 80,55,110,70 --d
 ### Картирование гарей
 
 ```bash
-# Картировать гари для региона (с автоматическим cloud masking)
+# Картировать гари для региона (все тайлы Sentinel-2, покрывающие bbox, с cloud masking)
 docker compose exec backend python manage.py map_burns \
   --bbox 79,71,82,74 \
   --pre_date 2025-06-01 \
@@ -408,6 +417,13 @@ docker compose exec backend python manage.py map_burns \
   --pre_date 2025-06-01 \
   --post_date 2025-07-31 \
   --max_cloud_cover 20
+
+# Очистить старые гари по bbox и дате перед прогоном
+docker compose exec backend python manage.py map_burns \
+  --bbox 79,71,82,74 \
+  --pre_date 2025-06-01 \
+  --post_date 2025-07-31 \
+  --clear
 ```
 
 ### Обновление промышленных зон (Overture Maps)
@@ -530,6 +546,25 @@ docker compose exec backend python manage.py update_industrial_zones --bbox 80,5
 - **Получение API ключа RouterAI**: https://routerai.ru/settings/keys
 
 ## Обновления и дополнения
+
+### v0.0.18 (2026-10-14) — Ускорение картирования: параллельная обработка, retry, live-прогресс
+- ⚡ **Параллельная обработка тайлов**: `ThreadPoolExecutor` (по умолчанию 3 воркера, `BURN_PARALLEL_TILES`) — тайлы независимы и обрабатываются одновременно: 11 тайлов ~35 мин → ~6 мин (измерено)
+- 🛡️ **Retry с backoff на 403/429/5xx** (`BURN_RETRY_DELAYS`, по умолчанию 15/30/60 с): лечит всплески троттлинга Planetary Computer, из-за которых отбрасывались тайлы; URL пере-подписываются на каждой попытке
+- 🩹 **Исправлен hang загрузок**: таймауты GDAL HTTP (`GDAL_HTTP_CONNECTTIMEOUT=30`, `GDAL_HTTP_TIMEOUT=300`) + retry на таймауты/обрывы соединения — без них зависший запрос к Azure вешал тайл навсегда (найдено в e2e-прогоне 2026-10-14)
+- 📡 **Отслеживание джобы**: каждый запуск картирования записывается в ProcessingJob (статус + живой прогресс в `result_summary`: tiles_done/tiles_total, га, полигоны) — виден по `GET /api/jobs/<id>/`
+- 🖥️ **Постепенный рендер на карте**: пока чат-запрос в работе, фронтенд каждые 15 с обновляет слой гарей из БД — полигоны появляются на карте по мере готовности тайлов; в чате — индикатор «Картирование гарей: N/M тайлов, X га»
+- 🔧 Потокобезопасность: закрытие DB-соединения worker-потоков, детерминированный порядок summary
+
+### v0.0.17 (2026-10-13) — Мультитайловое картирование гарей
+- 🗺️ **Мульти-тайловый анализ**: `map_burn_area` (AI-чат), `/api/map-burns/` и `manage.py map_burns` теперь обрабатывают ВСЕ тайлы Sentinel-2 (~100×100 км), пересекающие bbox, а не один — большие регионы и длительные периоды покрываются полностью. Лимит тайлов на запрос: `BURN_MAX_TILES` (по умолчанию 16), окно подбора сцен: `BURN_SCENE_WINDOW_DAYS` (по умолчанию 15 дней до/после)
+- 📊 **Покрытие в ответе**: summary содержит tiles_total / tiles_processed / tiles_failed и список тайлов с сценами и облачностью — агент сообщает, какая часть региона проанализирована
+- 🔧 **Единый модуль** `geo_processing/burn_mapping.py`: общий оркестратор и векторизация для chat, REST API и management command (убрано дублирование из трёх мест)
+- 🐛 **Исправлен cloud masking для малых bbox**: SCL-банда делилась на 10000 → облачная маска никогда не срабатывала (burn_severity.py)
+- 🐛 **Исправлен фильтр min_area**: площадь полигонов считалась в м² (UTM), но переводилась как градусы² — фильтр 1 га не работал
+- 🛠️ **MCP-инструменты заработали**: `search_sentinel2` и `start_burn_mapping` раньше создавали джобу в `/api/jobs/`, которая никогда не выполнялась (no-op); теперь вызывают реальные endpoints
+- ➕ Новый endpoint `POST /api/sentinel2/search/` — поиск сцен с разбивкой по тайлам
+- ➕ `map_burns --clear` — очистка старых гарей по bbox и дате перед прогоном
+- 📝 AI-агент: обновлён system prompt — разбивка больших регионов на ячейки ≤ 2–3°, обязательное картирование перед отчётом, подсказка в `generate_burn_report` при отсутствии данных
 
 ### v0.0.16 (2026-09-25) — Увеличение LLM timeout и исправление диагностики sandbox
 - ⏱️ **LLM_REQUEST_TIMEOUT увеличен до 180 секунд** (было 90): сложные multi-step запросы с 5+ итерациями инструментов требуют больше времени для обработки. При старом timeout возникала ошибка "Connection error" после успешного выполнения всех инструментов

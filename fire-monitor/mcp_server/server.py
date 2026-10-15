@@ -77,33 +77,34 @@ async def search_sentinel2(
     start_date: str,
     end_date: str,
     max_cloud_cover: int = 30,
-    limit: int = 10,
+    limit: int = 100,
 ) -> dict:
     """
-    Search for Sentinel-2 satellite scenes for burn severity analysis.
+    Search for available Sentinel-2 satellite scenes for a region and period.
+
+    Returns the found scenes (id, datetime, cloud cover, MGRS tile) plus the
+    clearest scene per tile — useful for planning burn severity analysis.
 
     Args:
         bbox: Bounding box [minx, miny, maxx, maxy] in WGS84
         start_date: Start date in YYYY-MM-DD format
         end_date: End date in YYYY-MM-DD format
         max_cloud_cover: Maximum cloud cover percentage (0-100)
-        limit: Maximum number of results
+        limit: Maximum number of scenes to fetch (max 500, default 100)
 
     Returns:
-        List of available Sentinel-2 scenes with dates and cloud cover.
+        Dict with scenes_found count, per-tile summary (clearest scene per tile)
+        and a list of scenes (id, datetime, cloud_cover, tile).
     """
     async with httpx.AsyncClient(timeout=60) as client:
         response = await client.post(
-            f'{BACKEND_URL}/api/jobs/',
+            f'{BACKEND_URL}/api/sentinel2/search/',
             json={
-                'job_type': 'sentinel2_search',
-                'params': {
-                    'bbox': bbox,
-                    'start_date': start_date,
-                    'end_date': end_date,
-                    'max_cloud_cover': max_cloud_cover,
-                    'limit': limit,
-                },
+                'bbox': bbox,
+                'start_date': start_date,
+                'end_date': end_date,
+                'max_cloud_cover': max_cloud_cover,
+                'limit': limit,
             },
         )
         response.raise_for_status()
@@ -207,38 +208,29 @@ async def start_burn_mapping(
     post_date: str,
 ) -> dict:
     """
-    Start a burn severity mapping job using Sentinel-2 dNBR analysis.
+    Map burn severity using Sentinel-2 dNBR analysis. Runs synchronously and
+    processes all Sentinel-2 tiles (~100x100 km) covering the bbox (up to 16
+    tiles) — can take several minutes.
 
-    Requires pre-fire and post-fire dates. The system will find the closest
-    available Sentinel-2 scenes and calculate burn severity.
+    Requires pre-fire and post-fire dates. The system finds the closest
+    cloud-free Sentinel-2 scenes per tile and calculates burn severity.
 
     Args:
-        bbox: Bounding box [minx, miny, maxx, maxy] in WGS84
-        pre_date: Pre-fire date (YYYY-MM-DD) — before the fire
-        post_date: Post-fire date (YYYY-MM-DD) — after the fire
+        bbox: Bounding box [minx, miny, maxx, maxy] in WGS84 (max 30° × 30°)
+        pre_date: Pre-fire date (YYYY-MM-DD) — before the fire period
+        post_date: Post-fire date (YYYY-MM-DD) — after the fire period
 
     Returns:
-        Job ID and status for tracking progress.
+        GeoJSON with burn polygons (features) plus stats: total burned area,
+        severity breakdown and per-tile coverage (tiles_processed/tiles_total).
     """
-    async with httpx.AsyncClient(timeout=60) as client:
+    async with httpx.AsyncClient(timeout=3600) as client:
         response = await client.post(
-            f'{BACKEND_URL}/api/jobs/',
+            f'{BACKEND_URL}/api/map-burns/',
             json={
-                'job_type': 'burn_mapping',
-                'bbox': {
-                    'type': 'Polygon',
-                    'coordinates': [[
-                        [bbox[0], bbox[1]],
-                        [bbox[2], bbox[1]],
-                        [bbox[2], bbox[3]],
-                        [bbox[0], bbox[3]],
-                        [bbox[0], bbox[1]],
-                    ]],
-                },
-                'params': {
-                    'pre_date': pre_date,
-                    'post_date': post_date,
-                },
+                'bbox': bbox,
+                'pre_date': pre_date,
+                'post_date': post_date,
             },
         )
         response.raise_for_status()

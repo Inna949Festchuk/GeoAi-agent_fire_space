@@ -13,5 +13,6 @@ urlpatterns = [
     path('chat/', views.chat_view, name='chat'),
     path('fetch-fires/', views.fetch_fires_view, name='fetch-fires'),
     path('map-burns/', views.map_burns_view, name='map-burns'),
+    path('sentinel2/search/', views.sentinel2_search_view, name='sentinel2-search'),
     path('stats/', views.overview_stats, name='overview-stats'),
 ]

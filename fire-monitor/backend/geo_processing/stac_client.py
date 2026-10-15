@@ -11,7 +11,14 @@ from typing import Optional
 import pystac_client
 import planetary_computer as pc
 
+import re
+
 logger = logging.getLogger(__name__)
+
+# MGRS tile part of a Sentinel-2 item id, e.g. 'T47UNA' in
+# S2B_MSIL2A_20240715T044659_R076_T47UNA_20240715T084743
+# (no \b: the surrounding underscores are word characters, so \b would never match)
+_MGRS_TILE_RE = re.compile(r'(?<![A-Za-z0-9])T\d{2}[A-Z]{3}(?![A-Za-z0-9])')
 
 # STAC API endpoint
 PC_STAC_URL = 'https://planetarycomputer.microsoft.com/api/stac/v1'
@@ -120,6 +127,30 @@ def search_landsat(
 
     logger.info(f'Found {len(items)} Landsat scenes')
     return items
+
+
+def tile_id_of(item):
+    """
+    MGRS tile identifier (e.g. '47UNA') of a Sentinel-2 STAC item.
+
+    Prefers the 's2m:tile' property; falls back to parsing the item id
+    (S2B_MSIL2A_20240715T044659_R076_T47UNA_20240715T084743 -> 'T47UNA').
+    """
+    tile = item.properties.get('s2m:tile')
+    if tile:
+        return str(tile)
+    match = _MGRS_TILE_RE.search(item.id)
+    if match:
+        return match.group(0)
+    return item.id
+
+
+def cloud_cover_of(item):
+    """Scene cloud cover percentage (float, 100.0 if missing/invalid)."""
+    try:
+        return float(item.properties.get('eo:cloud_cover', 100))
+    except (TypeError, ValueError):
+        return 100.0
 
 
 def get_sentinel2_assets(item, bands=None):

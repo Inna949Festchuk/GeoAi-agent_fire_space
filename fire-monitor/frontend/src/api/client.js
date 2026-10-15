@@ -33,6 +33,7 @@ export async function fetchBurns(params = {}) {
   const searchParams = new URLSearchParams()
   if (params.bbox) searchParams.set('bbox', params.bbox.join(','))
   if (params.severity) searchParams.set('severity', params.severity)
+  searchParams.set('page_size', 10000)
 
   const res = await fetch(`${API_BASE}/burns/?${searchParams}`)
   if (!res.ok) throw new Error(`Failed to fetch burns: ${res.status}`)
@@ -69,6 +70,16 @@ export async function startJob(jobType, params) {
   })
   if (!res.ok) throw new Error(`Failed to start job: ${res.status}`)
   return res.json()
+}
+
+export async function fetchLatestBurnJob() {
+  // Latest burn_mapping job — used to show live tile progress while a
+  // multi-tile burn mapping run is in flight.
+  const res = await fetch(`${API_BASE}/jobs/?page_size=5`)
+  if (!res.ok) return null
+  const data = await res.json()
+  const jobs = data.results || data
+  return jobs.find((j) => j.job_type === 'burn_mapping') || null
 }
 
 export async function mapBurns(params) {

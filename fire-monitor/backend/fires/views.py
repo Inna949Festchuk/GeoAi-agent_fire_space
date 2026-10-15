@@ -313,23 +313,17 @@ def fetch_fires_view(request):
 @api_view(['POST'])
 def map_burns_view(request):
     """
-    Map burn severity using Sentinel-2 dNBR analysis.
-    Accepts bbox, pre_date, post_date and returns burn area polygons.
+    Map burn severity using Sentinel-2 dNBR analysis (multi-tile).
+
+    Processes all Sentinel-2 tiles covering the bbox (up to BURN_MAX_TILES)
+    and returns burn area polygons with a per-tile coverage summary.
     """
-    from geo_processing.stac_client import search_sentinel2, get_sentinel2_assets, get_scl_asset
-    from geo_processing.burn_severity import process_sentinel2_burn
-    from django.contrib.gis.geos import MultiPolygon, GEOSGeometry
-    import numpy as np
-    from rasterio.features import shapes
-    from shapely.geometry import shape
-    from shapely.ops import unary_union
+    from geo_processing.burn_mapping import map_burns_multitile
 
     bbox = request.data.get('bbox')
     pre_date = request.data.get('pre_date')
     post_date = request.data.get('post_date')
     max_cloud_cover = request.data.get('max_cloud_cover', 30)
-
-    print(f"[DEBUG] map_burns_view called with bbox={bbox}, pre_date={pre_date}, post_date={post_date}")
 
     if not all([bbox, pre_date, post_date]):
         return Response(
@@ -353,230 +347,133 @@ def map_burns_view(request):
     # Validate bbox size to prevent OOM
     lon_span = bbox[2] - bbox[0]
     lat_span = bbox[3] - bbox[1]
-    max_span = 30  # Maximum 30 degrees (~3000km × 3000km)
+    max_span = 30  # Maximum 30 degrees (~3000km x 3000km)
 
     if lon_span > max_span or lat_span > max_span:
         return Response(
-            {'error': f'Bbox too large ({lon_span:.1f}° × {lat_span:.1f}°). Maximum size is {max_span}° × {max_span}°. Please specify a smaller region.'},
+            {'error': f'Bbox too large ({lon_span:.1f}° x {lat_span:.1f}°). Maximum size is {max_span}° x {max_span}°. Please specify a smaller region.'},
             status=status.HTTP_400_BAD_REQUEST
         )
 
     try:
-        # Search for pre-fire Sentinel-2 scenes (search in range: pre_date - 15 days to pre_date)
-        from datetime import timedelta
-        pre_date_obj = datetime.strptime(pre_date, '%Y-%m-%d').date()
-        pre_date_start = (pre_date_obj - timedelta(days=15)).isoformat()
-        
-        print(f"[DEBUG] Searching for pre-fire scenes ({pre_date_start} to {pre_date})...")
-        pre_scenes = search_sentinel2(
+        result = map_burns_multitile(
             bbox=bbox,
-            start_date=pre_date_start,
-            end_date=pre_date,
+            pre_date=pre_date,
+            post_date=post_date,
             max_cloud_cover=max_cloud_cover,
-            limit=5,
         )
-
-        if not pre_scenes:
-            return Response(
-                {'error': f'No pre-fire Sentinel-2 scenes found for {pre_date_start} to {pre_date}'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-
-        # Select best pre-fire scene (lowest cloud cover)
-        pre_scene = min(pre_scenes, key=lambda s: s.properties.get('eo:cloud_cover', 100))
-        print(f"[DEBUG] Selected pre-fire scene: {pre_scene.id}")
-
-        # Search for post-fire Sentinel-2 scenes (search in range: post_date to post_date + 15 days)
-        post_date_obj = datetime.strptime(post_date, '%Y-%m-%d').date()
-        post_date_end = (post_date_obj + timedelta(days=15)).isoformat()
-        
-        print(f"[DEBUG] Searching for post-fire scenes ({post_date} to {post_date_end})...")
-        post_scenes = search_sentinel2(
-            bbox=bbox,
-            start_date=post_date,
-            end_date=post_date_end,
-            max_cloud_cover=max_cloud_cover,
-            limit=5,
-        )
-
-        if not post_scenes:
-            return Response(
-                {'error': f'No post-fire Sentinel-2 scenes found for {post_date} to {post_date_end}'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-
-        # Select best post-fire scene (lowest cloud cover)
-        post_scene = min(post_scenes, key=lambda s: s.properties.get('eo:cloud_cover', 100))
-        print(f"[DEBUG] Selected post-fire scene: {post_scene.id}")
-
-        # Get signed asset URLs
-        print(f"[DEBUG] Getting signed asset URLs...")
-        pre_assets = get_sentinel2_assets(pre_scene, bands=['B08', 'B12'])
-        post_assets = get_sentinel2_assets(post_scene, bands=['B08', 'B12'])
-        print(f"[DEBUG] Pre assets: {list(pre_assets.keys())}")
-        print(f"[DEBUG] Post assets: {list(post_assets.keys())}")
-
-        # Get SCL assets for cloud masking
-        pre_scl_url = get_scl_asset(pre_scene)
-        post_scl_url = get_scl_asset(post_scene)
-        print(f"[DEBUG] Cloud masking: pre_scl={'available' if pre_scl_url else 'not available'}, post_scl={'available' if post_scl_url else 'not available'}")
-
-        # Process burn severity with cloud masking
-        print(f"[DEBUG] Processing burn severity...")
-        result = process_sentinel2_burn(
-            pre_assets=pre_assets,
-            post_assets=post_assets,
-            bbox=bbox,
-            n_classes=4,
-            pre_scl_url=pre_scl_url,
-            post_scl_url=post_scl_url,
-            apply_cloud_masking=True,
-        )
-
-        # Extract statistics
-        stats = result['stats']
-        severity_data = result['severity']
-        transform = result['transform']
-        source_crs = result['crs']
-
-        print(f"[DEBUG] Burn severity stats: {stats}")
-        print(f"[DEBUG] Severity data shape: {severity_data.shape if hasattr(severity_data, 'shape') else 'N/A'}")
-        print(f"[DEBUG] Source CRS: {source_crs}")
-
-        # Create transformer for reprojection to WGS84
-        transformer = Transformer.from_crs(source_crs, "EPSG:4326", always_xy=True)
-        project = lambda x, y: transformer.transform(x, y)
-
-        # Create burn area polygons for each severity class
-        features = []
-        burn_areas_created = 0
-
-        # Optimization parameters
-        min_area_ha = 1.0  # Minimum polygon area in hectares
-        simplify_tolerance = 0.005  # Simplification tolerance in degrees (~250-500m)
-        downsample_factor = 4  # Reduce resolution by 4x for faster vectorization
-
-        # Calculate approximate area conversion factor (degrees² to hectares)
-        # At latitude ~60°: 1° lat ≈ 111km, 1° lon ≈ 55.5km
-        # 1°² ≈ 6160 km² ≈ 616000 ha
-        avg_lat = (bbox[1] + bbox[3]) / 2
-        lat_rad = np.radians(avg_lat)
-        deg_to_m_lat = 111000  # meters per degree latitude
-        deg_to_m_lon = 111000 * np.cos(lat_rad)  # meters per degree longitude
-        deg2_to_ha = (deg_to_m_lat * deg_to_m_lon) / 10000  # degrees² to hectares
-
-        for severity_class in ['low', 'moderate', 'high']:
-            if severity_class not in stats or stats[severity_class]['area_ha'] == 0:
-                continue
-
-            logger.info(f"Processing severity class: {severity_class}, area: {stats[severity_class]['area_ha']} ha")
-
-            # Create mask for this severity class
-            mask = (severity_data == severity_class).astype(np.uint8)
-            
-            # Downsample mask for faster vectorization (simple stride approach)
-            if downsample_factor > 1:
-                mask_downsampled = mask[::downsample_factor, ::downsample_factor]
-                # Adjust transform for downsampled raster
-                downsampled_transform = transform * transform.scale(downsample_factor, downsample_factor)
-            else:
-                mask_downsampled = mask
-                downsampled_transform = transform
-
-            # Vectorize raster to polygons with filtering
-            polygons = []
-            for geom, value in shapes(mask_downsampled.astype(np.uint8), transform=downsampled_transform):
-                if value == 1:
-                    try:
-                        poly = shape(geom)
-                        if poly.is_valid and poly.area > 0:
-                            # Filter by area (convert degrees² to hectares)
-                            area_ha = poly.area * deg2_to_ha
-                            if area_ha >= min_area_ha:
-                                polygons.append(poly)
-                    except Exception as e:
-                        logger.warning(f'Invalid polygon: {e}')
-                        continue
-
-            if not polygons:
-                logger.info(f"No polygons created for {severity_class}")
-                continue
-
-            logger.info(f"Created {len(polygons)} polygons for {severity_class} (after filtering)")
-
-            # Merge polygons
-            merged = unary_union(polygons)
-
-            # Simplify geometry to reduce complexity
-            merged = merged.simplify(simplify_tolerance, preserve_topology=True)
-            logger.info(f"Simplified geometry: {merged.geom_type}, vertices reduced")
-
-            # Reproject from UTM to WGS84
-            merged_wgs84 = shapely_transform(project, merged)
-            logger.info(f"Reprojected to WGS84")
-
-            # Convert to GeoJSON
-            if merged_wgs84.geom_type == 'Polygon':
-                geom_json = merged_wgs84.__geo_interface__
-            elif merged_wgs84.geom_type == 'MultiPolygon':
-                geom_json = merged_wgs84.__geo_interface__
-            else:
-                continue
-
-            # Create BurnArea record
-            try:
-                geos_geom = GEOSGeometry(str(merged_wgs84), srid=4326)
-                burn_area = BurnArea.objects.create(
-                    geometry=geos_geom,
-                    area_ha=stats[severity_class]['area_ha'],
-                    severity=severity_class,
-                    dnbr_mean=stats[severity_class]['mean_dnbr'],
-                    pre_date=pre_date,
-                    post_date=post_date,
-                    satellite='Sentinel-2',
-                    tile_id=pre_scene.id,
-                )
-                burn_areas_created += 1
-                logger.info(f"Created BurnArea record: {burn_area.id}")
-            except Exception as e:
-                logger.error(f'Failed to save burn area: {e}')
-                continue
-
-            # Add to GeoJSON features
-            features.append({
-                'type': 'Feature',
-                'geometry': geom_json,
-                'properties': {
-                    'severity': severity_class,
-                    'area_ha': stats[severity_class]['area_ha'],
-                    'mean_dnbr': stats[severity_class]['mean_dnbr'],
-                    'pre_date': pre_date,
-                    'post_date': post_date,
-                },
-            })
-
-        return Response({
-            'type': 'FeatureCollection',
-            'features': features,
-            'stats': {
-                'total_burned_ha': stats['total_burned_ha'],
-                'burn_areas_created': burn_areas_created,
-                'pre_scene': pre_scene.id,
-                'post_scene': post_scene.id,
-                'by_severity': {
-                    k: {'area_ha': v['area_ha'], 'mean_dnbr': v['mean_dnbr']}
-                    for k, v in stats.items()
-                    if k != 'total_burned_ha'
-                },
-            }
-        })
-
+    except ValueError as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     except Exception as e:
         logger.exception('Burn mapping failed')
         return Response(
             {'error': f'Burn mapping failed: {str(e)}'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+    summary = result['summary']
+    if 'error' in summary:
+        return Response({'error': summary['error']}, status=status.HTTP_404_NOT_FOUND)
+
+    return Response({
+        'type': 'FeatureCollection',
+        'features': result['geojson']['features'],
+        'stats': {
+            **summary,
+            'burn_areas_created': summary.get('polygons_loaded', 0),
+        }
+    })
+
+
+@csrf_exempt
+@api_view(['POST'])
+def sentinel2_search_view(request):
+    """
+    Search for available Sentinel-2 scenes for a region and period.
+
+    Returns the found scenes (id, datetime, cloud cover, MGRS tile) plus the
+    clearest scene per tile. Used by the MCP server and for planning burn
+    severity analysis.
+    """
+    from geo_processing.stac_client import search_sentinel2, tile_id_of, cloud_cover_of
+
+    bbox = request.data.get('bbox')
+    start_date = request.data.get('start_date')
+    end_date = request.data.get('end_date')
+    max_cloud_cover = request.data.get('max_cloud_cover', 30)
+    try:
+        limit = min(int(request.data.get('limit', 100)), 500)
+    except (TypeError, ValueError):
+        limit = 100
+
+    if not all([bbox, start_date, end_date]):
+        return Response(
+            {'error': 'Missing required parameters: bbox, start_date, end_date'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    try:
+        if isinstance(bbox, str):
+            bbox = tuple(float(x) for x in bbox.split(','))
+        elif isinstance(bbox, list):
+            bbox = tuple(float(x) for x in bbox)
+        else:
+            raise ValueError('Invalid bbox format')
+    except (ValueError, TypeError) as e:
+        return Response(
+            {'error': f'Invalid bbox format: {e}'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    try:
+        items = search_sentinel2(
+            bbox=bbox,
+            start_date=start_date,
+            end_date=end_date,
+            max_cloud_cover=max_cloud_cover,
+            limit=limit,
+        )
+    except Exception as e:
+        logger.exception('Sentinel-2 search failed')
+        return Response(
+            {'error': f'Sentinel-2 search failed: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+    scenes = [
+        {
+            'id': s.id,
+            'datetime': str(s.datetime),
+            'cloud_cover': s.properties.get('eo:cloud_cover'),
+            'tile': tile_id_of(s),
+        }
+        for s in items[:50]
+    ]
+
+    best_per_tile = {}
+    for s in items:
+        tile = tile_id_of(s)
+        if not tile:
+            continue
+        cloud = cloud_cover_of(s)
+        entry = best_per_tile.get(tile)
+        if entry is None or cloud < entry['cloud_cover']:
+            best_per_tile[tile] = {
+                'tile': tile,
+                'scene_id': s.id,
+                'datetime': str(s.datetime),
+                'cloud_cover': cloud,
+            }
+
+    return Response({
+        'bbox': list(bbox),
+        'start_date': start_date,
+        'end_date': end_date,
+        'max_cloud_cover': max_cloud_cover,
+        'scenes_found': len(items),
+        'tiles': sorted(best_per_tile.values(), key=lambda t: t['tile']),
+        'scenes': scenes,
+    })
 
 
 @api_view(['GET'])
