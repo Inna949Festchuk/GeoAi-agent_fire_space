@@ -1,5 +1,31 @@
-import { useEffect, useRef, useMemo } from 'react'
+import { useEffect, useRef, useMemo, useState } from 'react'
 import maplibregl from 'maplibre-gl'
+
+// Определения базовых карт: обычная (OSM) и спутниковая (ESRI World Imagery,
+// такие же растровые тайлы, как в репозитории flight-planning)
+const BASEMAPS = {
+  osm: {
+    label: 'Обычная',
+    source: {
+      type: 'raster',
+      tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+      tileSize: 256,
+      attribution: '© OpenStreetMap contributors',
+    },
+  },
+  esri: {
+    label: 'Спутниковая',
+    source: {
+      type: 'raster',
+      tiles: [
+        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      ],
+      tileSize: 256,
+      maxzoom: 19,
+      attribution: 'Esri, Maxar, Earthstar Geographics',
+    },
+  },
+}
 
 function MapView({ 
   fireData, burnData, customData, 
@@ -9,6 +35,8 @@ function MapView({
   const mapRef = useRef(null)
   const mapContainerRef = useRef(null)
   const moveTimeoutRef = useRef(null)
+  // Текущая базовая карта: 'osm' (обычная) | 'esri' (спутниковая ESRI)
+  const [basemap, setBasemap] = useState('esri')
   // HTML-оверлеи (marker'ы) для текстовых подписей пользовательских точек —
   // гарантированно рендерят кириллицу (в отличие от symbol-слоёв, которым
   // нужен глиф-шрифт, отсутствующий в растровом OSM-стиле)
@@ -47,18 +75,13 @@ function MapView({
       style: {
         version: 8,
         sources: {
-          'osm-tiles': {
-            type: 'raster',
-            tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
-            tileSize: 256,
-            attribution: '© OpenStreetMap contributors',
-          },
+          'basemap': BASEMAPS.esri.source,
         },
         layers: [
           {
-            id: 'osm-tiles',
+            id: 'basemap',
             type: 'raster',
-            source: 'osm-tiles',
+            source: 'basemap',
             minzoom: 0,
             maxzoom: 19,
           },
@@ -94,6 +117,19 @@ function MapView({
       mapRef.current = null
     }
   }, [])
+
+  // Переключение базовой карты (обычная OSM / спутниковая ESRI World Imagery).
+  // Меняем только источник нижнего растрового слоя — поверх него все
+  // тематические слои (пожары, гары, маршруты) остаются нетронутыми.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !map.getLayer('basemap')) return
+    map.setSource('basemap', BASEMAPS[basemap].source)
+  }, [basemap])
+
+  const toggleBasemap = () => {
+    setBasemap((prev) => (prev === 'esri' ? 'osm' : 'esri'))
+  }
 
   // Вспомогательные функции для попапов пользовательских точек/подписей
   const escapeHtml = (s) => String(s)
@@ -508,7 +544,19 @@ function MapView({
     }
   }, [otherCustomData, showCustom])
 
-  return <div ref={mapContainerRef} style={{ width: '100%', height: '100%' }} />
+  return (
+    <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+      <div ref={mapContainerRef} style={{ width: '100%', height: '100%' }} />
+      {/* Кнопка переключения базовой карты */}
+      <button
+        className="basemap-toggle"
+        onClick={toggleBasemap}
+        title={basemap === 'esri' ? 'Переключить на обычную карту' : 'Переключить на спутниковую карту'}
+      >
+        {basemap === 'esri' ? '🗺️ Обычная карта' : '🛰️ Спутниковая карта'}
+      </button>
+    </div>
+  )
 }
 
 export default MapView
