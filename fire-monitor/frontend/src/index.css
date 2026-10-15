@@ -34,6 +34,29 @@ body {
   height: 100%;
 }
 
+/* Кнопка переключения базовой карты (обычная OSM / спутниковая ESRI) */
+.basemap-toggle {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 10;
+  padding: 8px 14px;
+  background: #16213e;
+  color: #eee;
+  border: 1px solid #0f3460;
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.basemap-toggle:hover {
+  background: #1a1a2e;
+  border-color: #e94560;
+}
+
 /* Sidebar */
 .sidebar {
   width: 570px;
