@@ -1,155 +1,31 @@
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts'
-import { exportReport } from '../api/client'
+import ExportButtons, { handleExportReport } from './ExportButtons'
+
+// Возвращает «ключ» действия: одинаковые вызовы одного инструмента
+// (например, agent дважды дёрнул search_fires с теми же параметрами)
+// считаем одним действием, чтобы не рисовать дублирующиеся графики.
+const actionKey = (action) => {
+  const args = typeof action.args === 'string' ? action.args : JSON.stringify(action.args || {})
+  return `${action.tool}:${args}`
+}
+
+const dedupeActions = (actions) => {
+  const seen = new Set()
+  const unique = []
+  for (const action of actions) {
+    const key = actionKey(action)
+    if (seen.has(key)) continue
+    seen.add(key)
+    unique.push(action)
+  }
+  return unique
+}
 
 function ResultsVisualization({ actions }) {
   if (!actions || actions.length === 0) return null
 
-  const exportToGeoJSON = (data, filename) => {
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
-  }
-
-  const exportToCSV = (data, filename) => {
-    const csv = convertToCSV(data)
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
-  }
-
-  const handleExportReport = async (reportId, format) => {
-    try {
-      const data = await exportReport(reportId, format)
-
-      if (format === 'csv') {
-        const url = URL.createObjectURL(data)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = `burn_report_${reportId}.csv`
-        document.body.appendChild(a)
-        a.click()
-        document.body.removeChild(a)
-        URL.revokeObjectURL(url)
-      } else {
-        exportToGeoJSON(data, `burn_report_${reportId}.geojson`)
-      }
-    } catch (error) {
-      console.error('Export failed:', error)
-      alert('Ошибка при экспорте отчёта')
-    }
-  }
-
-  const convertToCSV = (data) => {
-    if (!data || !data.features) return ''
-
-    // Определяем тип данных: пожары (точки) или гари (полигоны)
-    const firstFeature = data.features[0]
-    const isPoint = firstFeature?.geometry?.type === 'Point'
-    
-    if (isPoint) {
-      // Экспорт пожаров (точки)
-      const headers = ['id', 'latitude', 'longitude', 'brightness', 'confidence', 'frp', 'source', 'detected_at']
-      const rows = data.features.map((f, idx) => {
-        const props = f.properties || {}
-        const coords = f.geometry?.coordinates || [0, 0]
-        return [
-          idx + 1,
-          coords[1],
-          coords[0],
-          props.brightness || '',
-          props.confidence || '',
-          props.frp || '',
-          props.source || '',
-          props.detected_at || ''
-        ].join(',')
-      })
-      return [headers.join(','), ...rows].join('\n')
-    } else {
-      // Экспорт гарей (полигоны)
-      const headers = ['id', 'severity', 'area_ha', 'dnbr_mean', 'pre_date', 'post_date', 'satellite', 'tile_id', 'geometry_wkt']
-      const rows = data.features.map((f, idx) => {
-        const props = f.properties || {}
-        // Конвертируем геометрию в WKT формат
-        const geometry = f.geometry
-        let wkt = ''
-        if (geometry?.type === 'Polygon' || geometry?.type === 'MultiPolygon') {
-          wkt = `"${geometry.type}(${JSON.stringify(geometry.coordinates)})"`
-        }
-        return [
-          idx + 1,
-          props.severity || '',
-          props.area_ha || '',
-          props.dnbr_mean || '',
-          props.pre_date || '',
-          props.post_date || '',
-          props.satellite || '',
-          props.tile_id || '',
-          wkt
-        ].join(',')
-      })
-      return [headers.join(','), ...rows].join('\n')
-    }
-  }
-
-  // Определяем тип данных для экспорта на основе действий
-  const getExportType = () => {
-    const hasBurns = actions.some(action => action.tool === 'map_burn_area')
-    const hasFires = actions.some(action => action.tool === 'search_fires' || action.tool === 'get_fire_statistics')
-    
-    if (hasBurns && !hasFires) return 'burns'
-    if (hasFires && !hasBurns) return 'fires'
-    return 'both' // Если есть и то, и другое
-  }
-
-  // Загрузка полных данных из API для экспорта
-  const loadFullData = async () => {
-    const exportType = getExportType()
-    
-    try {
-      if (exportType === 'burns' || exportType === 'both') {
-        // Загружаем гари
-        const response = await fetch('/api/burns/?page_size=10000')
-        if (!response.ok) throw new Error('Failed to load burns data')
-        const data = await response.json()
-        return data.results || data
-      } else {
-        // Загружаем пожары
-        const response = await fetch('/api/fires/?page_size=10000')
-        if (!response.ok) throw new Error('Failed to load fires data')
-        const data = await response.json()
-        return data.results || data
-      }
-    } catch (error) {
-      console.error('Error loading full data:', error)
-      return null
-    }
-  }
-
-  const handleExportGeoJSON = async () => {
-    const fullData = await loadFullData()
-    if (fullData) {
-      exportToGeoJSON(fullData, `fire-monitor-export-${Date.now()}.geojson`)
-    }
-  }
-
-  const handleExportCSV = async () => {
-    const fullData = await loadFullData()
-    if (fullData) {
-      exportToCSV(fullData, `fire-monitor-export-${Date.now()}.csv`)
-    }
-  }
+  // Убираем дубликаты действий — один график на уникальное действие
+  const uniqueActions = dedupeActions(actions)
 
   const renderFireSearchChart = (action) => {
     const { result_summary } = action
@@ -343,7 +219,7 @@ function ResultsVisualization({ actions }) {
                   <Cell key={`cell-${index}`} fill={entry.color} />
                 ))}
               </Pie>
-              <Tooltip formatter={(value) => `${value.toFixed(2)} га`} />
+              <Tooltip formatter={(value) => `${Number(value).toFixed(2)} га`} />
               <Legend />
             </PieChart>
           </ResponsiveContainer>
@@ -363,20 +239,23 @@ function ResultsVisualization({ actions }) {
           )}
         </div>
 
-        <div className="report-actions">
-          <button
-            className="btn btn-small btn-export"
-            onClick={() => handleExportReport(reportId, 'geojson')}
-          >
-            Экспорт GeoJSON
-          </button>
-          <button
-            className="btn btn-small btn-export"
-            onClick={() => handleExportReport(reportId, 'csv')}
-          >
-            Экспорт CSV
-          </button>
-        </div>
+        {/* Экспорт конкретного отчёта выполняется через API-эндпоинты reports/{id}/export_* */}
+        {reportId && (
+          <div className="report-actions">
+            <button
+              className="btn btn-small btn-export btn-geojson"
+              onClick={() => handleExportReport(reportId, 'geojson')}
+            >
+              GeoJSON отчёта
+            </button>
+            <button
+              className="btn btn-small btn-export btn-csv"
+              onClick={() => handleExportReport(reportId, 'csv')}
+            >
+              CSV отчёта
+            </button>
+          </div>
+        )}
       </div>
     )
   }
@@ -397,13 +276,14 @@ function ResultsVisualization({ actions }) {
     )
   }
 
-  // Проверяем наличие данных для экспорта
-  const hasData = actions.length > 0
+  // Тип данных для общего блока экспорта: гари или пожары
+  const hasBurns = uniqueActions.some(a => a.tool === 'map_burn_area' || a.tool === 'generate_burn_report')
+  const dataType = hasBurns ? 'burns' : 'fires'
 
   return (
     <div className="results-visualization">
       <div className="charts-container">
-        {actions.map((action, idx) => {
+        {uniqueActions.map((action, idx) => {
           if (action.tool === 'search_fires') return renderFireSearchChart(action)
           if (action.tool === 'get_fire_statistics') return renderFireStatisticsChart(action)
           if (action.tool === 'map_burn_area') return renderBurnMappingChart(action)
@@ -412,24 +292,9 @@ function ResultsVisualization({ actions }) {
           return null
         })}
       </div>
-      
-      {hasData && (
-        <div className="export-buttons">
-          <div className="export-label">Выгрузить результат в:</div>
-          <button
-            className="btn btn-export btn-geojson"
-            onClick={handleExportGeoJSON}
-          >
-            GeoJSON
-          </button>
-          <button
-            className="btn btn-export btn-csv"
-            onClick={handleExportCSV}
-          >
-            CSV
-          </button>
-        </div>
-      )}
+
+      {/* Единый блок кнопок выгрузки — рендерится один раз на всю панель результатов */}
+      <ExportButtons dataType={dataType} />
     </div>
   )
 }

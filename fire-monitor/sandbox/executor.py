@@ -1,5 +1,6 @@
 import ast
 import json
+import math  # noqa: F401 — стандартная библиотека, отдаётся коду в песочнице как 'math'
 import sys
 import asyncio
 import logging
@@ -236,7 +237,7 @@ def execute_code_sync(code: str, context: dict) -> dict:
     stderr_capture = io.StringIO()
     result = None
 
-    safe_globals = {'__builtins__': SAFE_BUILTINS}
+    safe_globals = {'__builtins__': SAFE_BUILTINS, 'math': math}
 
     # Автоматически импортируем разрешенные библиотеки
     try:
