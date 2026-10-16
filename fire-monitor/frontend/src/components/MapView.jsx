@@ -5,7 +5,8 @@ import maplibregl from 'maplibre-gl'
 // такие же растровые тайлы, как в репозитории flight-planning)
 const BASEMAPS = {
   osm: {
-    label: 'Обычная',
+    label: 'Обычная карта (OSM)',
+    icon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/><path d="M9 4v14"/><path d="M15 6v14"/></svg>',
     source: {
       type: 'raster',
       tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
@@ -14,7 +15,8 @@ const BASEMAPS = {
     },
   },
   esri: {
-    label: 'Спутниковая',
+    label: 'Спутниковая карта (ESRI World Imagery)',
+    icon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3.6 9h16.8"/><path d="M3.6 15h16.8"/><path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18z"/></svg>',
     source: {
       type: 'raster',
       tiles: [
@@ -27,6 +29,121 @@ const BASEMAPS = {
   },
 }
 
+// Переключатель базовой карты — MapLibre-контрол в штатном виде
+// (такой же белый блок, как NavigationControl). Встроенного селектора
+// базовых карт в MapLibre GL нет, а runtime-класса Control — тоже
+// (в отличие от Mapbox: в maplibre-gl 4.x `maplibregl.Control ===
+// undefined`), поэтому — стандартный подход: обычный объект,
+// реализующий интерфейс IControl (onAdd/onRemove). Контрол живёт в
+// штатном контейнере контролей карты и сам меняет источник растрового
+// слоя «basemap» — тематические слои (пожары, гари, маршруты) при этом
+// не затрагиваются.
+const createBasemapSwitcherControl = (basemaps, defaultId) => {
+  let currentId = defaultId
+  let container = null
+  let map = null
+  let watchHandler = null
+
+  const applyNow = () => {
+    if (!map) return
+    const bm = basemaps[currentId]
+    try {
+      // В MapLibre GL нет map.setSource(), а setTileSize/setMaxzoom/
+      // setAttribution отсутствуют в этой сборке — используем каноническую
+      // последовательность removeLayer → removeSource → addSource → addLayer.
+      const style = map.getStyle()
+      const firstAbove = (style.layers || []).find(l => l.id !== 'basemap')?.id
+      if (map.getLayer('basemap')) map.removeLayer('basemap')
+      if (map.getSource('basemap')) map.removeSource('basemap')
+      map.addSource('basemap', bm.source)
+      // firstAbove — вернуть базовую карту в низ стека, под тематические слои
+      map.addLayer(
+        { id: 'basemap', type: 'raster', source: 'basemap', minzoom: 0, maxzoom: 19 },
+        firstAbove,
+      )
+      console.log('[basemap] applied:', currentId, bm?.label)
+    } catch (err) {
+      console.error('[basemap] apply failed:', err)
+    }
+  }
+
+  // Если стиль карты ещё не загрузился (слоя basemap нет) — ждём его
+  // появления по styledata и применяем источник. Слушатель одноразовый
+  // и отключает сам себя: на каждый кадр поллить не нужно.
+  const watchUntilLayer = () => {
+    if (!map) return
+    if (map.getLayer('basemap')) {
+      applyNow()
+      return
+    }
+    if (!watchHandler) {
+      watchHandler = () => {
+        if (map.getLayer('basemap')) {
+          map.off('styledata', watchHandler)
+          watchHandler = null
+          applyNow()
+        }
+      }
+      map.on('styledata', watchHandler)
+    }
+  }
+
+  const stopWatch = () => {
+    if (map && watchHandler) {
+      map.off('styledata', watchHandler)
+      watchHandler = null
+    }
+  }
+
+  const refreshActive = () => {
+    if (!container) return
+    const btns = container.children
+    let i = 0
+    for (const id of Object.keys(basemaps)) {
+      btns[i]?.classList.toggle('active', id === currentId)
+      i += 1
+    }
+  }
+
+  const select = (id) => {
+    if (!map || id === currentId) return
+    currentId = id
+    console.log('[basemap] switch to:', id, basemaps[id]?.label)
+    refreshActive()
+    watchUntilLayer()
+  }
+
+  return {
+    onAdd(m) {
+      map = m
+      container = document.createElement('div')
+      container.className = 'maplibregl-ctrl maplibregl-ctrl-group basemap-switcher'
+
+      for (const [id, bm] of Object.entries(basemaps)) {
+        const btn = document.createElement('button')
+        btn.className = 'basemap-switcher-btn'
+        btn.title = bm.label
+        btn.setAttribute('aria-label', bm.label)
+        btn.innerHTML = bm.icon
+        btn.addEventListener('click', () => select(id))
+        container.appendChild(btn)
+      }
+
+      refreshActive()
+      // Дожидаемся загрузки стиля, чтобы гарантированно применить
+      // выбранную базовую карту (обычно это дефолтная ESRI).
+      watchUntilLayer()
+      return container
+    },
+    onRemove() {
+      stopWatch()
+      if (container) container.remove()
+      map = null
+      container = null
+    },
+  }
+}
+
 function MapView({ 
   fireData, burnData, customData, 
   showFires, showBurns, showRoutes, showFireStations, showCustom,
@@ -35,8 +152,6 @@ function MapView({
   const mapRef = useRef(null)
   const mapContainerRef = useRef(null)
   const moveTimeoutRef = useRef(null)
-  // Текущая базовая карта: 'osm' (обычная) | 'esri' (спутниковая ESRI)
-  const [basemap, setBasemap] = useState('esri')
   // HTML-оверлеи (marker'ы) для текстовых подписей пользовательских точек —
   // гарантированно рендерят кириллицу (в отличие от symbol-слоёв, которым
   // нужен глиф-шрифт, отсутствующий в растровом OSM-стиле)
@@ -92,6 +207,9 @@ function MapView({
     })
 
     map.addControl(new maplibregl.NavigationControl(), 'top-left')
+    // Штатного селектора базовых карт в MapLibre GL нет — свой контрол
+    // в стандартном виде (белый блок под навигацией, слева сверху).
+    map.addControl(createBasemapSwitcherControl(BASEMAPS, 'esri'), 'top-left')
     map.addControl(new maplibregl.ScaleControl(), 'bottom-left')
 
     map.on('moveend', () => {
@@ -117,19 +235,6 @@ function MapView({
       mapRef.current = null
     }
   }, [])
-
-  // Переключение базовой карты (обычная OSM / спутниковая ESRI World Imagery).
-  // Меняем только источник нижнего растрового слоя — поверх него все
-  // тематические слои (пожары, гары, маршруты) остаются нетронутыми.
-  useEffect(() => {
-    const map = mapRef.current
-    if (!map || !map.getLayer('basemap')) return
-    map.setSource('basemap', BASEMAPS[basemap].source)
-  }, [basemap])
-
-  const toggleBasemap = () => {
-    setBasemap((prev) => (prev === 'esri' ? 'osm' : 'esri'))
-  }
 
   // Вспомогательные функции для попапов пользовательских точек/подписей
   const escapeHtml = (s) => String(s)
@@ -547,14 +652,6 @@ function MapView({
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       <div ref={mapContainerRef} style={{ width: '100%', height: '100%' }} />
-      {/* Кнопка переключения базовой карты */}
-      <button
-        className="basemap-toggle"
-        onClick={toggleBasemap}
-        title={basemap === 'esri' ? 'Переключить на обычную карту' : 'Переключить на спутниковую карту'}
-      >
-        {basemap === 'esri' ? '🗺️ Обычная карта' : '🛰️ Спутниковая карта'}
-      </button>
     </div>
   )
 }

@@ -561,6 +561,13 @@ When the user asks for a burn report ("сгенерируй отчёт по га
 2. Then call generate_burn_report with the same bbox and dates
 3. Summarize the report: total burned area, severity distribution, data quality
 
+MARKDOWN FORMATTING (the reply is rendered as GitHub-flavored Markdown, tables are enabled):
+- Write replies in Markdown: headings (##), lists, **bold** for key values (areas, counts, dates).
+- Tables: header row with | columns, separator row after the header; at most 4-5 columns.
+- Burn results — table by severity: | Тяжесть | Площадь, га | Доля, % | ; fire lists — | Дата | Район | Уверенность |.
+- Do not use HTML tags, emoji headings, or horizontal rules.
+- If the answer is short (1-2 sentences) — no headings and no tables.
+
 Always provide context about data sources and limitations.
 Fire hotspot locations are approximate (375m for VIIRS, 1km for MODIS).
 Burn severity analysis uses Sentinel-2 imagery at 10-20m resolution.

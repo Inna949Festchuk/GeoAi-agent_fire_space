@@ -34,27 +34,31 @@ body {
   height: 100%;
 }
 
-/* Кнопка переключения базовой карты (обычная OSM / спутниковая ESRI) */
-.basemap-toggle {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  z-index: 10;
-  padding: 8px 14px;
-  background: #16213e;
-  color: #eee;
-  border: 1px solid #0f3460;
-  border-radius: 8px;
-  font-size: 13px;
-  font-family: inherit;
+/* Переключатель базовой карты (OSM / ESRI) — MapLibre-контрол в штатном
+   виде: белый блок с тенью (.maplibregl-ctrl-group), иконки-кнопки 30×30,
+   активная — подсвечена. Лежит под NavigationControl, слева сверху. */
+.basemap-switcher .basemap-switcher-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 5px;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: #333;
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
-  transition: background 0.2s, border-color 0.2s;
+  transition: background 0.15s;
 }
 
-.basemap-toggle:hover {
-  background: #1a1a2e;
-  border-color: #e94560;
+.basemap-switcher .basemap-switcher-btn:hover {
+  background: #f1f1f1;
+}
+
+.basemap-switcher .basemap-switcher-btn.active {
+  background: #e0e0e0;
+  color: #0f3460;
 }
 
 /* Sidebar */

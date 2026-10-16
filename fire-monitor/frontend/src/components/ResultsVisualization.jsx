@@ -1,5 +1,5 @@
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts'
-import ExportButtons, { handleExportReport } from './ExportButtons'
+import ExportButtons from './ExportButtons'
 
 // Возвращает «ключ» действия: одинаковые вызовы одного инструмента
 // (например, agent дважды дёрнул search_fires с теми же параметрами)
@@ -137,15 +137,37 @@ function ResultsVisualization({ actions }) {
     )
   }
 
-  const renderBurnMappingChart = (action) => {
-    const { result_summary } = action
-    if (!result_summary || result_summary.error) return null
+  const renderBurnMappingChart = (actions) => {
+    // Один сводный график: если регион был разбит на несколько ячеек
+    // (несколько вызовов map_burn_area), суммы считаются по всем ячейкам.
+    const list = Array.isArray(actions) ? actions : [actions]
+    const summary = list.find(a => a.result_summary && !a.result_summary.error)?.result_summary
+    if (!summary) return null
 
-    const severityData = Object.entries(result_summary.by_severity || {})
+    const totals = {}
+    let totalArea = 0
+    let tilesProcessed = 0
+    let tilesTotal = 0
+    for (const action of list) {
+      const s = action.result_summary
+      if (!s || s.error) continue
+      totalArea += s.total_burned_ha || 0
+      tilesProcessed += s.tiles_processed || 0
+      tilesTotal += s.tiles_total || 0
+      for (const [key, val] of Object.entries(s.by_severity || {})) {
+        if (key === 'unburned') continue
+        totals[key] = (totals[key] || 0) + ((val && typeof val === 'object') ? (val.area_ha || 0) : (val || 0))
+      }
+    }
+    if (list.length > 1) {
+      summary = { ...summary, total_burned_ha: totalArea, by_severity: totals }
+    }
+
+    const severityData = Object.entries(summary.by_severity || {})
       .filter(([key]) => key !== 'unburned')
       .map(([name, data]) => ({
         name: name === 'high' ? 'Высокая' : name === 'moderate' ? 'Средняя' : 'Низкая',
-        value: data.area_ha || 0,
+        value: (data && typeof data === 'object') ? (data.area_ha || 0) : (data || 0),
         color: name === 'high' ? '#dc2626' : name === 'moderate' ? '#ea580c' : '#ca8a04'
       }))
 
@@ -172,9 +194,12 @@ function ResultsVisualization({ actions }) {
           </PieChart>
         </ResponsiveContainer>
         <div className="chart-stats">
-          <div>Общая площадь: <strong>{result_summary.total_burned_ha?.toFixed(2) || 0} га</strong></div>
-          <div>Pre-fire: <strong>{result_summary.pre_date || 'N/A'}</strong></div>
-          <div>Post-fire: <strong>{result_summary.post_date || 'N/A'}</strong></div>
+          <div>Общая площадь: <strong>{summary.total_burned_ha?.toFixed(2) || 0} га</strong></div>
+          <div>Pre-fire: <strong>{summary.pre_date || 'N/A'}</strong></div>
+          <div>Post-fire: <strong>{summary.post_date || 'N/A'}</strong></div>
+          {tilesTotal > 0 && (
+            <div>Покрытие: <strong>{tilesProcessed}/{tilesTotal} тайлов</strong></div>
+          )}
         </div>
       </div>
     )
@@ -238,24 +263,6 @@ function ResultsVisualization({ actions }) {
             <div>Низкая тяжесть: <strong>{severityDist.low.percentage?.toFixed(1) || 0}%</strong></div>
           )}
         </div>
-
-        {/* Экспорт конкретного отчёта выполняется через API-эндпоинты reports/{id}/export_* */}
-        {reportId && (
-          <div className="report-actions">
-            <button
-              className="btn btn-small btn-export btn-geojson"
-              onClick={() => handleExportReport(reportId, 'geojson')}
-            >
-              GeoJSON отчёта
-            </button>
-            <button
-              className="btn btn-small btn-export btn-csv"
-              onClick={() => handleExportReport(reportId, 'csv')}
-            >
-              CSV отчёта
-            </button>
-          </div>
-        )}
       </div>
     )
   }
@@ -280,13 +287,21 @@ function ResultsVisualization({ actions }) {
   const hasBurns = uniqueActions.some(a => a.tool === 'map_burn_area' || a.tool === 'generate_burn_report')
   const dataType = hasBurns ? 'burns' : 'fires'
 
+  // Если есть аналитический отчёт — он уже содержит итоги по всему региону,
+  // поэтому отдельные «Карта гарей» по ячейкам не рисуем (иначе N ячеек = N дублей).
+  const hasBurnReport = uniqueActions.some(a => a.tool === 'generate_burn_report')
+
   return (
     <div className="results-visualization">
       <div className="charts-container">
         {uniqueActions.map((action, idx) => {
           if (action.tool === 'search_fires') return renderFireSearchChart(action)
           if (action.tool === 'get_fire_statistics') return renderFireStatisticsChart(action)
-          if (action.tool === 'map_burn_area') return renderBurnMappingChart(action)
+          if (action.tool === 'map_burn_area') {
+            if (hasBurnReport) return null
+            if (idx > 0) return null // несколько ячеек — один сводный график на регион
+            return renderBurnMappingChart(uniqueActions.filter(a => a.tool === 'map_burn_area'))
+          }
           if (action.tool === 'generate_burn_report') return renderBurnReportChart(action)
           if (action.tool === 'search_sentinel2_scenes') return renderSentinel2Chart(action)
           return null

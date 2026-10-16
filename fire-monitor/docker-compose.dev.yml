@@ -89,6 +89,7 @@ services:
       - ./frontend/src:/app/src
       - ./frontend/index.html:/app/index.html
       - ./frontend/vite.config.js:/app/vite.config.js
+      - ./frontend/package.json:/app/package.json:ro
     ports:
       - "5173:5173"
     depends_on:
