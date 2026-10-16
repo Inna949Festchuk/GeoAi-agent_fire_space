@@ -34,10 +34,10 @@ body {
   height: 100%;
 }
 
-/* Переключатель базовой карты (OSM / ESRI) — MapLibre-контрол в штатном
-   виде: белый блок с тенью (.maplibregl-ctrl-group), иконки-кнопки 30×30,
-   активная — подсвечена. Лежит под NavigationControl, слева сверху. */
-.basemap-switcher .basemap-switcher-btn {
+/* Кнопки MapLibre-контролей (переключатель базовой карты + рельеф 2.5D) —
+   штатный вид библиотеки: белый блок с тенью (.maplibregl-ctrl-group),
+   иконки-кнопки 30×30, активная — подсвечена. Слева сверху, под навигацией. */
+.map-std-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -52,11 +52,11 @@ body {
   transition: background 0.15s;
 }
 
-.basemap-switcher .basemap-switcher-btn:hover {
+.map-std-btn:hover {
   background: #f1f1f1;
 }
 
-.basemap-switcher .basemap-switcher-btn.active {
+.map-std-btn.active {
   background: #e0e0e0;
   color: #0f3460;
 }

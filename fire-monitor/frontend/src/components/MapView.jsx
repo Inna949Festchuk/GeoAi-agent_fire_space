@@ -4,14 +4,22 @@ import maplibregl from 'maplibre-gl'
 // Определения базовых карт: обычная (OSM) и спутниковая (ESRI World Imagery,
 // такие же растровые тайлы, как в репозитории flight-planning)
 const BASEMAPS = {
-  osm: {
-    label: 'Обычная карта (OSM)',
+  // «Обычная карта» — CartoDB Voyager (светлый стиль CARTO, 4 сабдомена).
+  // Вместо основного OSM-тайл-сервера: быстрее и стабильнее из нашей сети.
+  carto: {
+    label: 'Обычная карта (CartoDB)',
     icon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/><path d="M9 4v14"/><path d="M15 6v14"/></svg>',
     source: {
       type: 'raster',
-      tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+      tiles: [
+        'https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
+        'https://b.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
+        'https://c.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
+        'https://d.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
+      ],
       tileSize: 256,
-      attribution: '© OpenStreetMap contributors',
+      maxzoom: 19,
+      attribution: '© OpenStreetMap contributors © CARTO',
     },
   },
   esri: {
@@ -121,7 +129,7 @@ const createBasemapSwitcherControl = (basemaps, defaultId) => {
 
       for (const [id, bm] of Object.entries(basemaps)) {
         const btn = document.createElement('button')
-        btn.className = 'basemap-switcher-btn'
+        btn.className = 'map-std-btn'
         btn.title = bm.label
         btn.setAttribute('aria-label', bm.label)
         btn.innerHTML = bm.icon
@@ -140,6 +148,89 @@ const createBasemapSwitcherControl = (basemaps, defaultId) => {
       if (container) container.remove()
       map = null
       container = null
+    },
+  }
+}
+
+// 2.5D рельеф: terrarium-тайлы SRTM v3 (AWS Open Data, публичный бакет).
+// Покрытие SRTM: 56°S–60°N — все наши демо-регионы (Сибирь, Красноярск) в пределах.
+const TERRAIN = {
+  sourceId: 'dem',
+  tiles: ['https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png'],
+  encoding: 'terrarium',
+  tileSize: 256,
+  maxzoom: 13,
+  exaggeration: 2.0,
+}
+
+const TERRAIN_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><path d="M3 20 L9.5 8 L13.5 14.5 L16 10.5 L21 20 Z"/><path d="M9.5 8 L11 10.5 L9.5 12 L8 10.5 Z" fill="currentColor" stroke="none"/></svg>'
+
+// Тоггл 2.5D-рельефа — штатный вид MapLibre-контрола (один белый блок
+// с иконкой под переключателем базовых карт). Вкл/выкл переключает
+// map.setTerrain(): с наклонением (pitch/rotation) карта становится объёмной.
+const createTerrainToggleControl = (terrain) => {
+  let on = true
+  let container = null
+  let map = null
+  let styleHandler = null
+
+  const apply = () => {
+    if (!map || !map.getSource(terrain.sourceId)) return
+    try {
+      if (on) {
+        map.setTerrain({ source: terrain.sourceId, exaggeration: terrain.exaggeration })
+        console.log('[terrain] on, exaggeration', terrain.exaggeration)
+      } else {
+        map.setTerrain(null)
+        console.log('[terrain] off')
+      }
+    } catch (err) {
+      console.error('[terrain] setTerrain failed:', err)
+    }
+  }
+
+  const waitStyle = () => {
+    if (map.getLayer('dem-hillshade')) {
+      apply()
+    } else if (!styleHandler) {
+      styleHandler = () => {
+        if (map.getLayer('dem-hillshade')) {
+          map.off('styledata', styleHandler)
+          styleHandler = null
+          apply()
+        }
+      }
+      map.on('styledata', styleHandler)
+    }
+  }
+
+  return {
+    onAdd(m) {
+      map = m
+      container = document.createElement('div')
+      container.className = 'maplibregl-ctrl maplibregl-ctrl-group terrain-toggle'
+      const btn = document.createElement('button')
+      btn.className = 'map-std-btn'
+      btn.title = 'Рельеф 2.5D: вкл (SRTM)'
+      btn.setAttribute('aria-label', 'Рельеф 2.5D')
+      btn.innerHTML = TERRAIN_ICON
+      btn.addEventListener('click', () => {
+        on = !on
+        btn.classList.toggle('active', on)
+        btn.title = on ? 'Рельеф 2.5D: вкл (SRTM)' : 'Рельеф 2.5D: выкл'
+        if (map.getLayer('dem-hillshade')) apply()
+      })
+      btn.classList.toggle('active', on)
+      container.appendChild(btn)
+      waitStyle()
+      return container
+    },
+    onRemove() {
+      if (map && styleHandler) map.off('styledata', styleHandler)
+      if (container) container.remove()
+      map = null
+      container = null
+      styleHandler = null
     },
   }
 }
@@ -191,6 +282,14 @@ function MapView({
         version: 8,
         sources: {
           'basemap': BASEMAPS.esri.source,
+          'dem': {
+            type: 'raster-dem',
+            tiles: TERRAIN.tiles,
+            encoding: TERRAIN.encoding,
+            tileSize: TERRAIN.tileSize,
+            maxzoom: TERRAIN.maxzoom,
+            attribution: 'Elevation: SRTM v3 (AWS Open Data)',
+          },
         },
         layers: [
           {
@@ -199,6 +298,18 @@ function MapView({
             source: 'basemap',
             minzoom: 0,
             maxzoom: 19,
+          },
+          // Тени рельефа поверх базовой карты (работает и на OSM, и на ESRI);
+          // стоит ниже тематических слоёв — те добавляются поверх.
+          {
+            id: 'dem-hillshade',
+            type: 'hillshade',
+            source: 'dem',
+            paint: {
+              'hillshade-shadow-color': 'rgba(0, 0, 0, 0.4)',
+              'hillshade-highlight-color': 'rgba(255, 255, 255, 0.3)',
+              'hillshade-exaggeration': 0.7,
+            },
           },
         ],
       },
@@ -210,6 +321,8 @@ function MapView({
     // Штатного селектора базовых карт в MapLibre GL нет — свой контрол
     // в стандартном виде (белый блок под навигацией, слева сверху).
     map.addControl(createBasemapSwitcherControl(BASEMAPS, 'esri'), 'top-left')
+    // 2.5D-рельеф (SRTM terrarium + setTerrain) — кнопка под переключателем карт
+    map.addControl(createTerrainToggleControl(TERRAIN), 'top-left')
     map.addControl(new maplibregl.ScaleControl(), 'bottom-left')
 
     map.on('moveend', () => {
