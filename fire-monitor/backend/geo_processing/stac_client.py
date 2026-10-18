@@ -10,6 +10,7 @@ from typing import Optional
 
 import pystac_client
 import planetary_computer as pc
+from django.conf import settings
 
 import re
 
@@ -31,10 +32,15 @@ LANDSAT_C2_L2 = 'landsat-c2-l2'
 
 
 def get_catalog():
-    """Get the Planetary Computer STAC catalog."""
+    """Get the Planetary Computer STAC catalog.
+
+    Passes STAC_REQUEST_TIMEOUT (connect, read) so a stalled socket fails
+    fast instead of hanging a burn job forever (observed 2026-10-18).
+    """
     catalog = pystac_client.Client.open(
         PC_STAC_URL,
         modifier=pc.sign_inplace,
+        timeout=settings.STAC_REQUEST_TIMEOUT,
     )
     return catalog
 

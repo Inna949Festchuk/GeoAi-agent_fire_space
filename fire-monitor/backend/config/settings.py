@@ -172,3 +172,15 @@ BURN_SCENE_WINDOW_DAYS = int(os.environ.get('BURN_SCENE_WINDOW_DAYS', '15'))
 BURN_PARALLEL_TILES = int(os.environ.get('BURN_PARALLEL_TILES', '3'))
 # Retry delays (seconds) on transient HTTP errors 403/429/5xx from the data source
 BURN_RETRY_DELAYS = [int(x) for x in os.environ.get('BURN_RETRY_DELAYS', '15,30,60').split(',')]
+# Jobs stuck in 'running' longer than this (minutes) are considered dead
+# (e.g. the backend was OOM-killed mid-run and never finalized its jobs).
+# Finalized as 'failed' by the sweep_zombie_jobs startup command and by the
+# burn mapping duplicate-run guard.
+JOB_TIMEOUT_MINUTES = int(os.environ.get('JOB_TIMEOUT_MINUTES', '120'))
+# STAC API (Planetary Computer) HTTP timeouts in seconds (connect, read).
+# Without a read timeout a single stalled socket hangs a burn job forever
+# (observed 2026-10-18: a job stuck 1.5 h in the initial scene search).
+STAC_REQUEST_TIMEOUT = (
+    int(os.environ.get('STAC_CONNECT_TIMEOUT', '15')),
+    int(os.environ.get('STAC_READ_TIMEOUT', '120')),
+)

@@ -21,12 +21,13 @@ import numpy as np
 from django.conf import settings
 from django.contrib.gis.geos import GEOSGeometry
 from django.db import connection as django_db_connection
+from django.utils import timezone
 from pyproj import Transformer
 from rasterio.features import shapes
 from shapely.geometry import MultiPolygon, shape
 from shapely.ops import unary_union, transform as shapely_transform
 
-from fires.models import BurnArea
+from fires.models import BurnArea, ProcessingJob
 from geo_processing.burn_severity import process_sentinel2_burn
 from geo_processing.stac_client import (
     cloud_cover_of,
@@ -403,7 +404,6 @@ def _map_burns_multitile_core(bbox, pre_date, post_date, max_cloud_cover=30, max
 
 def _create_burn_job(bbox, pre_date, post_date, max_cloud_cover):
     from django.contrib.gis.geos import Polygon as DjangoPolygon
-    from fires.models import ProcessingJob
 
     return ProcessingJob.objects.create(
         job_type='burn_mapping',
@@ -414,14 +414,86 @@ def _create_burn_job(bbox, pre_date, post_date, max_cloud_cover):
             'post_date': post_date,
             'max_cloud_cover': max_cloud_cover,
         },
-        started_at=datetime.now(),
+        started_at=timezone.now(),
+    )
+
+
+def find_zombie_jobs(timeout_minutes=None, job_type=None):
+    """
+    Queryset of jobs stuck in 'running' beyond the timeout.
+
+    Args:
+        timeout_minutes: cutoff in minutes (default settings.JOB_TIMEOUT_MINUTES)
+        job_type: only this job type; None means all types
+    """
+    if timeout_minutes is None:
+        timeout_minutes = settings.JOB_TIMEOUT_MINUTES
+
+    cutoff = timezone.now() - timedelta(minutes=timeout_minutes)
+    qs = ProcessingJob.objects.filter(status='running', started_at__lt=cutoff)
+    if job_type is not None:
+        qs = qs.filter(job_type=job_type)
+    return qs
+
+
+def sweep_zombie_jobs(timeout_minutes=None, job_type=None):
+    """
+    Finalize jobs stuck in 'running' as 'failed'.
+
+    A job whose process died (e.g. the backend was OOM-killed mid-run)
+    never gets its status updated, so it stays 'running' forever and the
+    frontend keeps showing a "Картирование гарей: N/M тайлов" banner for
+    a dead run. This sweep marks such jobs failed, based on how long they
+    have been running.
+
+    Args:
+        timeout_minutes: jobs running longer than this are considered dead
+                         (default settings.JOB_TIMEOUT_MINUTES)
+        job_type: only sweep this job type; None means all types
+
+    Returns:
+        Number of jobs finalized.
+    """
+    if timeout_minutes is None:
+        timeout_minutes = settings.JOB_TIMEOUT_MINUTES
+
+    finalized = 0
+    for job in find_zombie_jobs(timeout_minutes, job_type):
+        job.status = 'failed'
+        job.error_message = (
+            f'Job stuck in "running" for over {timeout_minutes} minutes '
+            f'(likely killed by OOM or a backend restart); marked as failed.'
+        )
+        job.completed_at = timezone.now()
+        job.save()
+        finalized += 1
+
+    if finalized:
+        logger.warning(f'Swept {finalized} zombie job(s) stuck in "running" over {timeout_minutes} minutes')
+    return finalized
+
+
+def _active_burn_job():
+    """
+    Return a live burn mapping job that is still expected to be running, or
+    None.
+
+    A 'running' job that has already exceeded JOB_TIMEOUT_MINUTES is treated
+    as dead (same rule as the sweep) so a stale record does not block new
+    runs.
+    """
+    cutoff = timezone.now() - timedelta(minutes=settings.JOB_TIMEOUT_MINUTES)
+    return (
+        ProcessingJob.objects.filter(status='running', job_type='burn_mapping', started_at__gte=cutoff)
+        .order_by('-started_at')
+        .first()
     )
 
 
 def _finalize_burn_job(job, status, summary):
     try:
         job.status = status
-        job.completed_at = datetime.now()
+        job.completed_at = timezone.now()
         job.result_summary = summary
         if status == 'failed':
             job.error_message = summary.get('error', 'Unknown error')
@@ -476,6 +548,21 @@ def map_burns_multitile(bbox, pre_date, post_date, max_cloud_cover=30, max_tiles
     post_obj = datetime.strptime(post_date, '%Y-%m-%d').date()
     if pre_obj >= post_obj:
         raise ValueError(f'pre_date ({pre_date}) must be before post_date ({post_date})')
+
+    # Guard against overlapping runs: two concurrent burn mappings use
+    # 2 x BURN_PARALLEL_TILES workers holding hundreds of MB of rasters
+    # each and OOM-kill the backend (observed 2026-10-18). A job passed
+    # explicitly (e.g. the map_burns command owns its record) is exempt.
+    if job is None:
+        active = _active_burn_job()
+        if active is not None:
+            raise ValueError(
+                f'Burn mapping is already running (job {active.id}, '
+                f'pre_date={active.params.get("pre_date")}, '
+                f'post_date={active.params.get("post_date")}, '
+                f'started {active.started_at:%Y-%m-%d %H:%M} UTC). '
+                'Wait for it to finish (or let it time out) before starting a new one.'
+            )
 
     if max_tiles is None:
         max_tiles = settings.BURN_MAX_TILES
