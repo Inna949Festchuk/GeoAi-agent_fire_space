@@ -644,3 +644,131 @@ class BurnReportViewSet(viewsets.ReadOnlyModelViewSet):
             ])
 
         return response
+
+
+# =============================================================================
+# VALIDATION (Strela data vs Rosleshoz 1T-ISM + NASA MCD64A1)
+# =============================================================================
+
+def _parse_bbox(bbox, max_span=30):
+    """Parse a bbox (list or 'x0,y0,x1,y1' string) into a tuple of floats."""
+    if isinstance(bbox, str):
+        coords = [float(x) for x in bbox.split(',')]
+    elif isinstance(bbox, (list, tuple)):
+        coords = [float(x) for x in bbox]
+    else:
+        raise ValueError('Invalid bbox format')
+    if len(coords) != 4:
+        raise ValueError('bbox must have 4 values [minx, miny, maxx, maxy]')
+    if (coords[2] - coords[0] > max_span) or (coords[3] - coords[1] > max_span):
+        raise ValueError(
+            f'Bbox too large ({coords[2] - coords[0]:.1f}° x {coords[3] - coords[1]:.1f}°). '
+            f'Maximum size is {max_span}° x {max_span}°.')
+    return tuple(coords)
+
+
+@csrf_exempt
+@api_view(['POST'])
+def validation_run_view(request):
+    """
+    Run validation of "Strela" data against ground truth
+    (Rosleshoz 1T-ISM registry + NASA MCD64A1 burn maps).
+
+    Body: {bbox: [minx, miny, maxx, maxy], start_date, end_date,
+           source: 'auto'|'db'|'files' (default 'auto'),
+           ensure_data: true (default) — download missing MCD64A1 tiles,
+           region_name: optional label for the report}
+
+    Returns: metrics (Precision/Recall/F1, IoU, area correlation), counts,
+    warnings and generated artifacts (reports/validation_report.md,
+    validation_map.html, metrics_summary.csv).
+    The first run for a period can take several minutes (MCD64A1 download).
+    """
+    from geo_processing.validation.config import ValidationDataError
+    from geo_processing.validation.pipeline import run_validation
+
+    bbox = request.data.get('bbox')
+    start_date = request.data.get('start_date')
+    end_date = request.data.get('end_date')
+    if not all([bbox, start_date, end_date]):
+        return Response(
+            {'error': 'Missing required parameters: bbox, start_date, end_date'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    try:
+        bbox = _parse_bbox(bbox)
+    except ValueError as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        result = run_validation(
+            bbox=bbox,
+            start_date=start_date,
+            end_date=end_date,
+            source=request.data.get('source', 'auto'),
+            ensure_data=bool(request.data.get('ensure_data', True)),
+            region_name=request.data.get('region_name'),
+        )
+    except ValidationDataError as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+    except Exception as e:
+        logger.exception('Validation failed')
+        return Response(
+            {'error': f'Validation failed: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+    result.pop('_geo', None)  # GeoDataFrames — not for the API response
+    return Response(result)
+
+
+@csrf_exempt
+@api_view(['POST'])
+def validation_prepare_view(request):
+    """
+    Prepare validation data (idempotent): extract the Rosleshoz 1T-ISM CSV
+    and download MCD64A1 tiles for all months of the period (cached on disk).
+    This is the heavy network step — run it separately if you want.
+    """
+    from geo_processing.validation.config import ValidationDataError
+    from geo_processing.validation.pipeline import prepare_data
+
+    bbox = request.data.get('bbox')
+    start_date = request.data.get('start_date')
+    end_date = request.data.get('end_date')
+    if not all([bbox, start_date, end_date]):
+        return Response(
+            {'error': 'Missing required parameters: bbox, start_date, end_date'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    try:
+        bbox = _parse_bbox(bbox)
+    except ValueError as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        return Response(prepare_data(bbox, start_date, end_date))
+    except ValidationDataError as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+    except Exception as e:
+        logger.exception('Validation data preparation failed')
+        return Response(
+            {'error': f'Validation data preparation failed: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+def validation_status_view(request):
+    """
+    Show which validation data is available: Rosleshoz zip/CSV, MCD64A1
+    cache (HDF + rasters), Strela files, and — with bbox/start_date/end_date
+    query params — Strela DB counts for the period.
+    """
+    from geo_processing.validation.pipeline import get_data_status
+
+    bbox = request.query_params.get('bbox')
+    return Response(get_data_status(
+        bbox=bbox.split(',') if bbox else None,
+        start_date=request.query_params.get('start_date'),
+        end_date=request.query_params.get('end_date'),
+    ))

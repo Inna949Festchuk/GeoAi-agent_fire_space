@@ -235,14 +235,21 @@ const createTerrainToggleControl = (terrain) => {
   }
 }
 
-function MapView({ 
-  fireData, burnData, customData, 
-  showFires, showBurns, showRoutes, showFireStations, showCustom,
-  onMapMove 
+function MapView({
+  fireData, burnData, customData, validationData,
+  showFires, showBurns, showRoutes, showFireStations, showCustom, showValidation,
+  showValGt, showValStrela, showValBurn, showValModis, showValZone,
+  onMapMove
 }) {
   const mapRef = useRef(null)
   const mapContainerRef = useRef(null)
   const moveTimeoutRef = useRef(null)
+  // Дatasets, на которые уже выполнена подгонка вида (fitBounds) — чтобы
+  // повторное переключение слоя не «двигало» карту
+  const validationFittedRef = useRef(null)
+  // Event handlers слоя валидации — для корректного map.off при повторном
+  // рендере (иначе попапы дублируются при каждом новом прогоне)
+  const validationHandlersRef = useRef(null)
   // HTML-оверлеи (marker'ы) для текстовых подписей пользовательских точек —
   // гарантированно рендерят кириллицу (в отличие от symbol-слоёв, которым
   // нужен глиф-шрифт, отсутствующий в растровом OSM-стиле)
@@ -761,6 +768,173 @@ function MapView({
       })
     }
   }, [otherCustomData, showCustom])
+
+  // Слой «Валидация» — результат run_validation из чата:
+  // синий — Рослесхоз (GT), красный — детекции Стрела, оранжевый — гари
+  // Стрела, зелёный — MCD64A1 (эталон), серый — промзоны
+  // (фичи типизированы properties.type)
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+
+    // ОЧИСТКА (слои + event handlers предыдущего рендера)
+    const prevHandlers = validationHandlersRef.current
+    if (prevHandlers) {
+      Object.entries(prevHandlers).forEach(([evt, fn]) => map.off(evt, fn))
+      validationHandlersRef.current = null
+    }
+    ;['validation-strela-points', 'validation-gt-points', 'validation-burns-outline',
+      'validation-burns', 'validation-zones-outline', 'validation-zones',
+      'validation-modis-outline'].forEach(id => {
+      if (map.getLayer(id)) map.removeLayer(id)
+    })
+    if (map.getSource('validation-data')) map.removeSource('validation-data')
+
+    const features = validationData?.features || []
+    if (!showValidation || features.length === 0) return
+
+    map.addSource('validation-data', { type: 'geojson', data: validationData })
+    const byType = (t) => ['==', ['get', 'type'], t]
+
+    // Промзоны (серые, внизу) — если включены
+    if (showValZone) {
+      map.addLayer({
+        id: 'validation-zones',
+        type: 'fill',
+        source: 'validation-data',
+        filter: byType('validation_zone'),
+        paint: { 'fill-color': '#9ca3af', 'fill-opacity': 0.25 },
+      })
+      map.addLayer({
+        id: 'validation-zones-outline',
+        type: 'line',
+        source: 'validation-data',
+        filter: byType('validation_zone'),
+        paint: { 'line-color': '#6b7280', 'line-width': 1, 'line-opacity': 0.6 },
+      })
+    }
+
+    // Гари Стрела (оранжевые) — если включены
+    if (showValBurn) {
+      map.addLayer({
+        id: 'validation-burns',
+        type: 'fill',
+        source: 'validation-data',
+        filter: byType('validation_burn'),
+        paint: { 'fill-color': '#ea580c', 'fill-opacity': 0.35 },
+      })
+      map.addLayer({
+        id: 'validation-burns-outline',
+        type: 'line',
+        source: 'validation-data',
+        filter: byType('validation_burn'),
+        paint: { 'line-color': '#ea580c', 'line-width': 1.5, 'line-opacity': 0.8 },
+      })
+    }
+
+    // NASA MCD64A1 — только граница (без заливки), если включён
+    if (showValModis) {
+      map.addLayer({
+        id: 'validation-modis-outline',
+        type: 'line',
+        source: 'validation-data',
+        filter: byType('validation_modis'),
+        paint: { 'line-color': '#15803d', 'line-width': 2, 'line-opacity': 1 },
+      })
+    }
+
+    // Рослесхоз GT (синие точки) — если включены
+    if (showValGt) {
+      map.addLayer({
+        id: 'validation-gt-points',
+        type: 'circle',
+        source: 'validation-data',
+        filter: byType('validation_gt'),
+        paint: {
+          'circle-radius': 5,
+          'circle-color': '#3b82f6',
+          'circle-stroke-width': 1.5,
+          'circle-stroke-color': '#fff',
+          'circle-opacity': 0.9,
+        },
+      })
+    }
+
+    // Детекции Стрела (красные точки) — если включены
+    if (showValStrela) {
+      map.addLayer({
+        id: 'validation-strela-points',
+        type: 'circle',
+        source: 'validation-data',
+        filter: byType('validation_strela'),
+        paint: {
+          'circle-radius': 6,
+          'circle-color': '#ef4444',
+          'circle-stroke-width': 1.5,
+          'circle-stroke-color': '#fff',
+        },
+      })
+    }
+
+    // Подгонка вида под рамку валидации — один раз на набор данных
+    if (validationFittedRef.current !== validationData) {
+      validationFittedRef.current = validationData
+      const b = new maplibregl.LngLatBounds()
+      const ext = (c) => {
+        if (!Array.isArray(c)) return
+        if (typeof c[0] === 'number') b.extend(c)
+        else c.forEach(ext)
+      }
+      features.forEach(f => { if (f.geometry) ext(f.geometry.coordinates) })
+      if (!b.isEmpty()) {
+        map.fitBounds(b, {
+          padding: 60,
+          maxZoom: 9,
+          duration: 1200,
+          easing: (t) => t * (2 - t),
+        })
+      }
+    }
+
+    const typeLabels = {
+      validation_gt: 'Рослесхоз (GT)',
+      validation_strela: 'Детекция Стрела',
+      validation_burn: 'Гари Стрела',
+      validation_modis: 'NASA MCD64A1 (выгорание, эталон)',
+      validation_zone: 'Промышленная зона',
+      validation_fp: 'Ложное срабатывание (FP)',
+      validation_fn: 'Пропущенный (FN)',
+    }
+    const showValPopup = (e) => {
+      const f = e.features && e.features[0]
+      if (!f) return
+      const p = f.properties || {}
+      let rows = ''
+      Object.entries(p).forEach(([k, v]) => {
+        if (k === 'type' || v === null || v === undefined || v === '') return
+        let val = v
+        if (typeof val === 'number' && !Number.isInteger(val)) val = val.toFixed(2)
+        rows += `<div class="popup-row"><span class="popup-label">${escapeHtml(k)}:</span> <span class="popup-value">${escapeHtml(String(val))}</span></div>`
+      })
+      new maplibregl.Popup({ className: 'map-popup-container', closeButton: false })
+        .setLngLat(e.lngLat)
+        .setHTML(`<div class="map-popup"><strong>${escapeHtml(typeLabels[p.type] || 'Валидация')}</strong>${rows}</div>`)
+        .addTo(map)
+    }
+    const valOnEnter = () => { map.getCanvas().style.cursor = 'pointer' }
+    const valOnLeave = () => { map.getCanvas().style.cursor = '' }
+    validationHandlersRef.current = {
+      click: showValPopup,
+      mouseenter: valOnEnter,
+      mouseleave: valOnLeave,
+    }
+    ;['validation-gt-points', 'validation-strela-points', 'validation-burns',
+      'validation-modis', 'validation-zones'].forEach(id => {
+      map.on('click', id, showValPopup)
+      map.on('mouseenter', id, valOnEnter)
+      map.on('mouseleave', id, valOnLeave)
+    })
+  }, [validationData, showValidation, showValGt, showValStrela, showValBurn, showValModis, showValZone])
 
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>

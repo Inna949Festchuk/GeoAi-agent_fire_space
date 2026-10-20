@@ -28,6 +28,20 @@ const LAYERS_CONFIG = [
     ],
   },
   {
+    id: 'validation',
+    name: 'Валидация',
+    icon: '🎯',
+    color: '#3b82f6',
+    description: 'Стрела vs Рослесхоз / MCD64A1',
+    legend: [
+      { color: '#3b82f6', label: 'Рослесхоз (GT)' },
+      { color: '#ef4444', label: 'Детекции Стрела' },
+      { color: '#ea580c', label: 'Гари Стрела', type: 'polygon' },
+      { color: '#16a34a', label: 'NASA MCD64A1 (эталон)', type: 'polygon' },
+      { color: '#9ca3af', label: 'Промзоны', type: 'polygon' },
+    ],
+  },
+  {
     id: 'routes',
     name: 'Маршруты',
     icon: '🛣️',
@@ -77,7 +91,7 @@ function Toggle({ checked, onChange, color = '#e94560' }) {
 }
 
 // Компонент слоя с легендой
-function LayerItem({ layer, enabled, onToggle, hasData }) {
+function LayerItem({ layer, enabled, onToggle, hasData, validationSublayers }) {
   const [showLegend, setShowLegend] = useState(false)
 
   return (
@@ -107,8 +121,29 @@ function LayerItem({ layer, enabled, onToggle, hasData }) {
           />
         </div>
       </div>
-      
-      {showLegend && hasData && layer.legend && (
+
+      {/* Вертикальный список подслоёв валидации с чекбоксами */}
+      {layer.id === 'validation' && hasData && validationSublayers && showLegend && (
+        <div className="validation-sublayers">
+          {validationSublayers.map((sub) => (
+            <label key={sub.id} className="validation-sublayer-item">
+              <input
+                type="checkbox"
+                checked={sub.checked}
+                onChange={(e) => sub.onChange(e.target.checked)}
+                disabled={!enabled}
+              />
+              <span
+                className="validation-sublayer-color"
+                style={{ backgroundColor: sub.color }}
+              ></span>
+              <span className="validation-sublayer-label">{sub.label}</span>
+            </label>
+          ))}
+        </div>
+      )}
+
+      {showLegend && hasData && layer.legend && layer.id !== 'validation' && (
         <div className="layer-legend">
           {layer.legend.map((item, idx) => (
             <div key={idx} className="legend-row">
@@ -129,23 +164,39 @@ function LayerItem({ layer, enabled, onToggle, hasData }) {
 }
 
 // Главная панель слоёв
-function LayerPanel({ 
+function LayerPanel({
   showFires, setShowFires,
   showBurns, setShowBurns,
   showRoutes, setShowRoutes,
   showFireStations, setShowFireStations,
   showCustom, setShowCustom,
-  hasFires, hasBurns, hasRoutes, hasFireStations, hasCustom
+  showValidation, setShowValidation,
+  showValGt, setShowValGt,
+  showValStrela, setShowValStrela,
+  showValBurn, setShowValBurn,
+  showValModis, setShowValModis,
+  showValZone, setShowValZone,
+  hasFires, hasBurns, hasRoutes, hasFireStations, hasCustom, hasValidation
 }) {
   const [isCollapsed, setIsCollapsed] = useState(false)
-  
+
   const layerStates = {
     fires: { enabled: showFires, setter: setShowFires, hasData: hasFires },
     burns: { enabled: showBurns, setter: setShowBurns, hasData: hasBurns },
+    validation: { enabled: showValidation, setter: setShowValidation, hasData: hasValidation },
     routes: { enabled: showRoutes, setter: setShowRoutes, hasData: hasRoutes },
     fire_stations: { enabled: showFireStations, setter: setShowFireStations, hasData: hasFireStations },
     custom: { enabled: showCustom, setter: setShowCustom, hasData: hasCustom },
   }
+
+  // Подслои валидации для чекбоксов
+  const validationSublayers = [
+    { id: 'gt', label: 'Рослесхоз (GT)', color: '#3b82f6', checked: showValGt, onChange: setShowValGt },
+    { id: 'strela', label: 'Детекции Стрела', color: '#ef4444', checked: showValStrela, onChange: setShowValStrela },
+    { id: 'burn', label: 'Гари Стрела', color: '#ea580c', checked: showValBurn, onChange: setShowValBurn },
+    { id: 'modis', label: 'NASA MCD64A1 (эталон)', color: '#16a34a', checked: showValModis, onChange: setShowValModis },
+    { id: 'zone', label: 'Промзоны', color: '#9ca3af', checked: showValZone, onChange: setShowValZone },
+  ]
 
   const activeLayersCount = Object.values(layerStates).filter(s => s.enabled && s.hasData).length
 
@@ -155,7 +206,7 @@ function LayerPanel({
         <h3>🗺️ Слои карты</h3>
         <div className="layer-panel-header-controls">
           <span className="layer-count">{activeLayersCount} активных</span>
-          <button 
+          <button
             className="layer-collapse-btn"
             onClick={() => setIsCollapsed(!isCollapsed)}
             title={isCollapsed ? 'Развернуть' : 'Свернуть'}
@@ -164,7 +215,7 @@ function LayerPanel({
           </button>
         </div>
       </div>
-      
+
       {!isCollapsed && (
         <div className="layer-panel-content">
           {LAYERS_CONFIG.map(layer => {
@@ -176,6 +227,7 @@ function LayerPanel({
                 enabled={state.enabled}
                 onToggle={state.setter}
                 hasData={state.hasData}
+                validationSublayers={layer.id === 'validation' ? validationSublayers : null}
               />
             )
           })}

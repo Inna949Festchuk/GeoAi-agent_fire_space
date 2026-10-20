@@ -1,0 +1,8 @@
+metric,value,target,status
+burn_iou,0.1235,>0.6,not met
+burn_f1,0.2199,>0.5,not met
+burn_area_correlation,0.8786,>0.8,met
+burn_mean_area_deviation_pct,78.3,<20.0,not met
+burn_strela_area_ha,321757.5,,
+burn_modis_area_ha,918200.0,,
+burn_temporal_lag_days,-18.51,,

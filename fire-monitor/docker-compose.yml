@@ -21,7 +21,7 @@ services:
       sh -c "python manage.py migrate &&
              python manage.py sweep_zombie_jobs &&
              python manage.py collectstatic --noinput &&
-             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 4"
+             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 4 --timeout 1800"
     environment:
       - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_USER=${POSTGRES_USER}
@@ -38,10 +38,15 @@ services:
       - JOB_TIMEOUT_MINUTES=${JOB_TIMEOUT_MINUTES:-120}
       - STAC_CONNECT_TIMEOUT=${STAC_CONNECT_TIMEOUT:-15}
       - STAC_READ_TIMEOUT=${STAC_READ_TIMEOUT:-120}
+      - EARTHDATA_TOKEN=${EARTHDATA_TOKEN}
+      - VAL_DATA_DIR=/data
+      - VAL_REPORTS_DIR=/reports
     volumes:
       - ./backend:/app
       - static_volume:/app/staticfiles
       - media_volume:/app/media
+      - ./data:/data
+      - ./reports:/reports
     ports:
       - "8000:8000"
     depends_on:

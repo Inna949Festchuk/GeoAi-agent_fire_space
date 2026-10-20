@@ -30,6 +30,7 @@ mcp = FastMCP(
     - Building driving routes between points (OSRM)
     - Finding nearest fire stations (OpenStreetMap)
     - Executing custom Python code for geospatial analysis (sandbox)
+    - Validating Strela data accuracy against Rosleshoz and NASA MCD64A1 (run_validation)
 
     All coordinates use WGS84 (EPSG:4326).
     Bounding boxes are [minx, miny, maxx, maxy].
@@ -237,6 +238,52 @@ async def start_burn_mapping(
         return response.json()
 
 
+@mcp.tool()
+async def run_validation(
+    bbox: list[float],
+    start_date: str,
+    end_date: str,
+    region_name: str | None = None,
+) -> dict:
+    """
+    Validate "Strela" system data against ground truth: Rosleshoz fire registry
+    (1T-ISM) and NASA MCD64A1 burn maps.
+
+    Computes Precision/Recall/F1 for active fire detection (geodesic buffer
+    500 m, +/-3 days) and IoU/area correlation for burn scar mapping (+/-5 days).
+    Generates report artifacts: validation_report.md, validation_map.html,
+    metrics_summary.csv.
+
+    The first run for a period downloads MCD64A1 tiles and can take several minutes.
+
+    Args:
+        bbox: Bounding box [minx, miny, maxx, maxy] in WGS84 (e.g. Irkutsk oblast: [97, 51, 119, 60])
+        start_date: Period start in YYYY-MM-DD format
+        end_date: Period end in YYYY-MM-DD format
+        region_name: Optional human-readable region name for the report
+
+    Returns:
+        Dict with metrics (precision, recall, f1, iou, area_correlation),
+        counts, warnings and generated artifact paths.
+    """
+    payload = {'bbox': bbox, 'start_date': start_date, 'end_date': end_date}
+    if region_name:
+        payload['region_name'] = region_name
+
+    async with httpx.AsyncClient(timeout=3600) as client:
+        response = await client.post(
+            f'{BACKEND_URL}/api/validation/run/', json=payload
+        )
+
+    if response.status_code != 200:
+        try:
+            detail = response.json().get('error', response.text)
+        except ValueError:
+            detail = response.text
+        return {'success': False, 'error': f'HTTP {response.status_code}: {str(detail)[:500]}'}
+    return response.json()
+
+
 # =============================================================================
 # ROUTING AND GEOLOCATION TOOLS
 # =============================================================================
@@ -367,6 +414,7 @@ async def service_info() -> str:
             'get_burn_stats',
             'start_fire_detection',
             'start_burn_mapping',
+            'run_validation',
             'build_route_mcp',
             'find_nearest_fire_stations_mcp',
             'execute_python_mcp',

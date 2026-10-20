@@ -12,6 +12,13 @@ const STORAGE_KEYS = {
   SHOW_ROUTES: 'fireMonitor_showRoutes',
   SHOW_STATIONS: 'fireMonitor_showFireStations',
   SHOW_CUSTOM: 'fireMonitor_showCustom',
+  SHOW_VALIDATION: 'fireMonitor_showValidation',
+  // Подслои валидации
+  SHOW_VAL_GT: 'fireMonitor_valGt',
+  SHOW_VAL_STRELA: 'fireMonitor_valStrela',
+  SHOW_VAL_BURN: 'fireMonitor_valBurn',
+  SHOW_VAL_MODIS: 'fireMonitor_valModis',
+  SHOW_VAL_ZONE: 'fireMonitor_valZone',
 }
 
 // Утиита для чтения из localStorage
@@ -33,6 +40,7 @@ function App() {
   const [fireData, setFireData] = useState(null)
   const [burnData, setBurnData] = useState(null)
   const [customData, setCustomData] = useState(null)
+  const [validationData, setValidationData] = useState(null)
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(false)
   const [bbox, setBbox] = useState(null)
@@ -45,6 +53,13 @@ function App() {
   const [showRoutes, setShowRoutes] = useState(() => getStoredBool(STORAGE_KEYS.SHOW_ROUTES, true))
   const [showFireStations, setShowFireStations] = useState(() => getStoredBool(STORAGE_KEYS.SHOW_STATIONS, true))
   const [showCustom, setShowCustom] = useState(() => getStoredBool(STORAGE_KEYS.SHOW_CUSTOM, true))
+  const [showValidation, setShowValidation] = useState(() => getStoredBool(STORAGE_KEYS.SHOW_VALIDATION, true))
+  // Подслои валидации
+  const [showValGt, setShowValGt] = useState(() => getStoredBool(STORAGE_KEYS.SHOW_VAL_GT, true))
+  const [showValStrela, setShowValStrela] = useState(() => getStoredBool(STORAGE_KEYS.SHOW_VAL_STRELA, true))
+  const [showValBurn, setShowValBurn] = useState(() => getStoredBool(STORAGE_KEYS.SHOW_VAL_BURN, true))
+  const [showValModis, setShowValModis] = useState(() => getStoredBool(STORAGE_KEYS.SHOW_VAL_MODIS, true))
+  const [showValZone, setShowValZone] = useState(() => getStoredBool(STORAGE_KEYS.SHOW_VAL_ZONE, true))
 
   // Resizable sidebar
   const [sidebarWidth, setSidebarWidth] = useState(() => 
@@ -59,6 +74,13 @@ function App() {
   useEffect(() => { localStorage.setItem(STORAGE_KEYS.SHOW_ROUTES, showRoutes) }, [showRoutes])
   useEffect(() => { localStorage.setItem(STORAGE_KEYS.SHOW_STATIONS, showFireStations) }, [showFireStations])
   useEffect(() => { localStorage.setItem(STORAGE_KEYS.SHOW_CUSTOM, showCustom) }, [showCustom])
+  useEffect(() => { localStorage.setItem(STORAGE_KEYS.SHOW_VALIDATION, showValidation) }, [showValidation])
+  // Подслои валидации
+  useEffect(() => { localStorage.setItem(STORAGE_KEYS.SHOW_VAL_GT, showValGt) }, [showValGt])
+  useEffect(() => { localStorage.setItem(STORAGE_KEYS.SHOW_VAL_STRELA, showValStrela) }, [showValStrela])
+  useEffect(() => { localStorage.setItem(STORAGE_KEYS.SHOW_VAL_BURN, showValBurn) }, [showValBurn])
+  useEffect(() => { localStorage.setItem(STORAGE_KEYS.SHOW_VAL_MODIS, showValModis) }, [showValModis])
+  useEffect(() => { localStorage.setItem(STORAGE_KEYS.SHOW_VAL_ZONE, showValZone) }, [showValZone])
 
   // Сохранение ширины sidebar
   useEffect(() => { localStorage.setItem(STORAGE_KEYS.SIDEBAR_WIDTH, sidebarWidth) }, [sidebarWidth])
@@ -168,14 +190,16 @@ function App() {
       routes: setShowRoutes,
       fire_stations: setShowFireStations,
       custom: setShowCustom,
+      validation: setShowValidation,
     }
-    
+
     const layerStates = {
       fires: showFires,
       burns: showBurns,
       routes: showRoutes,
       fire_stations: showFireStations,
       custom: showCustom,
+      validation: showValidation,
     }
     
     const setter = layerSetters[layer]
@@ -201,6 +225,10 @@ function App() {
           setBurnData(item.data)
         } else if (item.type === 'fire') {
           setFireData(item.data)
+        } else if (item.type === 'validation') {
+          // Результат run_validation: отдельный слой «Валидация»
+          // (GT / детекции / гари / промзоны типизированы properties.type)
+          setValidationData(item.data)
         } else {
           // custom / routes / fire_stations: MapView сам разделит features
           // на слои маршрутов, станций и прочего по геометрии и properties.type
@@ -242,11 +270,18 @@ function App() {
           fireData={fireData}
           burnData={burnData}
           customData={customData}
+          validationData={validationData}
           showFires={showFires}
           showBurns={showBurns}
           showRoutes={showRoutes}
           showFireStations={showFireStations}
           showCustom={showCustom}
+          showValidation={showValidation}
+          showValGt={showValGt}
+          showValStrela={showValStrela}
+          showValBurn={showValBurn}
+          showValModis={showValModis}
+          showValZone={showValZone}
           onMapMove={handleMapMove}
         />
       </div>
@@ -272,11 +307,18 @@ function App() {
           showRoutes={showRoutes} setShowRoutes={setShowRoutes}
           showFireStations={showFireStations} setShowFireStations={setShowFireStations}
           showCustom={showCustom} setShowCustom={setShowCustom}
+          showValidation={showValidation} setShowValidation={setShowValidation}
+          showValGt={showValGt} setShowValGt={setShowValGt}
+          showValStrela={showValStrela} setShowValStrela={setShowValStrela}
+          showValBurn={showValBurn} setShowValBurn={setShowValBurn}
+          showValModis={showValModis} setShowValModis={setShowValModis}
+          showValZone={showValZone} setShowValZone={setShowValZone}
           hasFires={fireData?.features?.length > 0}
           hasBurns={burnData?.features?.length > 0}
           hasRoutes={customData?.features?.some(f => f.geometry?.type === 'LineString')}
           hasFireStations={customData?.features?.some(f => f.properties?.type === 'fire_station')}
           hasCustom={customData?.features?.length > 0}
+          hasValidation={validationData?.features?.length > 0}
         />
 
         <ChatPanel

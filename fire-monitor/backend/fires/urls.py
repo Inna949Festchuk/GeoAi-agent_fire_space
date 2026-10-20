@@ -15,4 +15,7 @@ urlpatterns = [
     path('map-burns/', views.map_burns_view, name='map-burns'),
     path('sentinel2/search/', views.sentinel2_search_view, name='sentinel2-search'),
     path('stats/', views.overview_stats, name='overview-stats'),
+    path('validation/run/', views.validation_run_view, name='validation-run'),
+    path('validation/prepare/', views.validation_prepare_view, name='validation-prepare'),
+    path('validation/status/', views.validation_status_view, name='validation-status'),
 ]

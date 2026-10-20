@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(tail *)",
+      "Bash(ls *)",
+      "Bash(date *)",
+      "Bash(pgrep *)",
+      "Bash(python3 *)",
+      "Bash(xargs *)",
+      "Bash(sleep *)",
+      "Bash(then *)",
+      "Bash(pkill *)",
+      "Bash(rm *)",
+      "Bash(else *)",
+      "Bash(fi)",
+      "Bash(chmod *)",
+      "Bash(bash *)",
+      "Bash(echo *)",
+      "Bash(cd *)",
+      "Bash(docker compose *)",
+      "Bash(grep *)",
+      "Bash(cat *)",
+      "Bash(docker ps *)",
+      "Bash(setsid *)"
+    ]
+  },
+  "$version": 4
+}

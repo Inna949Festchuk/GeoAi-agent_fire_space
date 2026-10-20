@@ -49,8 +49,13 @@ services:
       - STAC_READ_TIMEOUT=${STAC_READ_TIMEOUT:-120}
       - GDAL_HTTP_CONNECTTIMEOUT=${GDAL_HTTP_CONNECTTIMEOUT:-30}
       - GDAL_HTTP_TIMEOUT=${GDAL_HTTP_TIMEOUT:-300}
+      - EARTHDATA_TOKEN=${EARTHDATA_TOKEN}
+      - VAL_DATA_DIR=/data
+      - VAL_REPORTS_DIR=/reports
     volumes:
       - ./backend:/app
+      - ./data:/data
+      - ./reports:/reports
     ports:
       - "8000:8000"
     depends_on:

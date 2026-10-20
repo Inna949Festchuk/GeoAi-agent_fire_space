@@ -50,6 +50,7 @@ touch .qwen/mcp.json
    - `search_sentinel2`
    - `get_fire_stats`
    - `start_burn_mapping`
+   - `run_validation`
    - и другие
 
 ---
@@ -72,6 +73,15 @@ touch .qwen/mcp.json
 ```
 Найди Sentinel-2 сцены для Байкала (bbox 103,51,110,56) за период с 2025-08-01 по 2025-08-15
 ```
+
+**Пример 4: Валидация данных «Стрелы»**
+```
+Запусти run_validation для Иркутской области (bbox 97,51,119,60) за июль 2024
+(start_date=2024-07-01, end_date=2024-07-31) — нужен Precision/Recall/F1
+и IoU гарей по Рослесхозу и NASA MCD64A1
+```
+Первый запуск скачивает тайлы MCD64A1 с NASA и занимает несколько минут.
+Отчёты: `reports/validation_report.md`, `validation_map.html`, `metrics_summary.csv`.
 
 ---
 

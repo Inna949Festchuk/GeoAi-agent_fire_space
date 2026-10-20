@@ -15,6 +15,7 @@ Severity classification (USGS standard):
 
 import logging
 import math
+import os
 import numpy as np
 import rasterio
 from rasterio.windows import from_bounds
@@ -23,22 +24,30 @@ from rasterio.io import MemoryFile
 
 logger = logging.getLogger(__name__)
 
-# Severity thresholds (dNBR * 1000, as values are typically scaled)
+# Severity thresholds (dNBR * 1000, as values are typically scaled).
+# USGS standard is the documented reference; the defaults are configurable
+# via BURN_DNBR_LOW_MAX / BURN_DNBR_MOD_MAX env vars. Raised from the USGS
+# 270/440 to 300/500: in July 2024 Irkutsk the moderate band 270-440 was
+# mostly phenology dilution, so the stricter thresholds keep polygons
+# closer to the real fire footprint.
+def _thr(name, default):
+    return float(os.environ.get(name, default))
+
 SEVERITY_THRESHOLDS = {
     'enhancement': (-np.inf, -100),
     'unburned': (-100, 100),
-    'low': (100, 270),
-    'moderate_low': (270, 440),
-    'moderate_high': (440, 660),
+    'low': (100, _thr('BURN_DNBR_LOW_MAX', 300)),
+    'moderate_low': (_thr('BURN_DNBR_LOW_MAX', 300), _thr('BURN_DNBR_MOD_MAX', 500)),
+    'moderate_high': (_thr('BURN_DNBR_MOD_MAX', 500), 660),
     'high': (660, np.inf),
 }
 
 # Simplified 4-class mapping
 SEVERITY_4CLASS = {
     'unburned': (-np.inf, 100),
-    'low': (100, 270),
-    'moderate': (270, 440),
-    'high': (440, np.inf),
+    'low': (100, _thr('BURN_DNBR_LOW_MAX', 300)),
+    'moderate': (_thr('BURN_DNBR_LOW_MAX', 300), _thr('BURN_DNBR_MOD_MAX', 500)),
+    'high': (_thr('BURN_DNBR_MOD_MAX', 500), np.inf),
 }
 
 

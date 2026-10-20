@@ -33,3 +33,7 @@ python-dotenv==1.0.1
 
 # API documentation
 drf-spectacular==0.28.0
+
+# Validation pipeline (MCD64A1 HDF5 reading + stakeholder reports)
+h5py>=3.11.0
+folium>=0.16.0

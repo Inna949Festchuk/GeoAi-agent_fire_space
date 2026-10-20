@@ -204,7 +204,7 @@ TOOLS = [
         'type': 'function',
         'function': {
             'name': 'search_fires',
-            'description': 'Search for active fire hotspots from satellite data (VIIRS, MODIS). Returns filtered fire locations with brightness, confidence, and FRP.',
+            'description': 'Search for fire hotspots from satellite data (VIIRS, MODIS). Returns filtered fire locations with brightness, confidence, and FRP. If the user names a specific past period (e.g. "за июль 2024", "2024-07-01 по 2024-07-31"), pass start_date/end_date — hotspots are read from the database for that period. Use days only for "recent/active" fires (live FIRMS feed, last 1-10 days).',
             'parameters': {
                 'type': 'object',
                 'properties': {
@@ -220,7 +220,15 @@ TOOLS = [
                     },
                     'days': {
                         'type': 'integer',
-                        'description': 'Number of days to look back (1 or 10)',
+                        'description': 'Number of days to look back (1 or 10). Use only when no explicit period is given.',
+                    },
+                    'start_date': {
+                        'type': 'string',
+                        'description': 'Period start (YYYY-MM-DD) — explicit past period, read from the database',
+                    },
+                    'end_date': {
+                        'type': 'string',
+                        'description': 'Period end (YYYY-MM-DD, inclusive)',
                     },
                 },
             },
@@ -515,6 +523,36 @@ TOOLS = [
     {
         'type': 'function',
         'function': {
+            'name': 'run_validation',
+            'description': 'Validate "Strela" system data against independent ground truth: Rosleshoz fire registry (form 1T-ISM) and NASA MCD64A1 burn maps. Computes Precision/Recall/F1 for active fire detection (geodesic buffer 500 m, +/-3 days) and IoU/F1/area correlation for burn scar mapping (1 km polygon buffer, +/-20 days — MCD64A1 is a monthly composite); generates reports/validation_report.md, validation_map.html, metrics_summary.csv. USE THIS TOOL when the user asks to validate data, check system accuracy, compare with Rosleshoz/NASA, or show detection metrics (P/R/F1). The first run for a period downloads NASA MCD64A1 tiles and can take several minutes.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'bbox': {
+                        'type': 'array',
+                        'items': {'type': 'number'},
+                        'description': 'Bounding box [minx, miny, maxx, maxy] in WGS84. Example: Irkutsk oblast [97, 51, 119, 60]',
+                    },
+                    'start_date': {
+                        'type': 'string',
+                        'description': 'Period start (YYYY-MM-DD)',
+                    },
+                    'end_date': {
+                        'type': 'string',
+                        'description': 'Period end (YYYY-MM-DD)',
+                    },
+                    'region_name': {
+                        'type': 'string',
+                        'description': 'Human-readable region name for the report (e.g. "Иркутская область")',
+                    },
+                },
+                'required': ['bbox', 'start_date', 'end_date'],
+            },
+        },
+    },
+    {
+        'type': 'function',
+        'function': {
             'name': 'control_layers',
             'description': 'Control map layer visibility. Use this when user asks to show/hide/toggle layers like fires, burns, routes, fire stations, or custom analysis results.',
             'parameters': {
@@ -560,6 +598,27 @@ When the user asks for a burn report ("сгенерируй отчёт по га
 1. Call map_burn_area for the region and period first (split large regions into cells of ~2-3°)
 2. Then call generate_burn_report with the same bbox and dates
 3. Summarize the report: total burned area, severity distribution, data quality
+
+VALIDATION (run_validation) RULES:
+- USE run_validation when the user asks to validate/verify system data, check accuracy,
+  compare with Rosleshoz or NASA MCD64A1, or show Precision/Recall/F1
+  ("проверь точность", "запусти валидацию", "сопоставь с Рослесхозом").
+- bbox is REQUIRED: convert the region the user names into an approximate bounding box
+  (Irkutsk oblast: [97, 51, 119, 60]; Yakutia: [100, 55, 150, 72];
+  Krasnoyarsk krai: [73, 55, 100, 72]).
+- The tool compares: (1) Strela fire detections vs the Rosleshoz registry ->
+  Precision/Recall/F1; (2) Strela burn polygons vs NASA MCD64A1 -> IoU, area correlation.
+- The first run for a period downloads NASA MCD64A1 tiles (~4 files) and takes several
+  minutes — tell the user it may take a few minutes, then report the result.
+- Report ONLY the metrics returned by the tool (Markdown table:
+  | Метрика | Значение | Цель | Статус |). NEVER invent numbers.
+- The tool ALSO draws the result on the application map — layer «Валидация»
+  (blue dots — Rosleskhoz GT, red dots — Strela detections, orange polygons —
+  Strela burns, gray — industrial zones). Mention in the reply that the layers
+  appeared on the map (toggle: panel «Слои карты»).
+- If the tool returns an error about missing data (e.g. no Strela detections for the
+  period) — explain to the user what exactly is missing and how to fix it
+  (run detection first / provide files). Do not guess.
 
 MARKDOWN FORMATTING (the reply is rendered as GitHub-flavored Markdown, tables are enabled):
 - Write replies in Markdown: headings (##), lists, **bold** for key values (areas, counts, dates).
@@ -640,6 +699,12 @@ When user asks to "find fires AND filter/buffer/analyze them":
 2. Then call execute_python — the system AUTOMATICALLY passes previous tool results in context
 3. In your code, access fires via context['search_fires']
 4. Process and return __result__ for map display
+
+FIRE PERIOD RULE: if the user names a specific past period ("за июль 2024",
+конкретные даты), call search_fires with start_date/end_date — hotspots are
+read from the database for that period. days= is for "recent/active" fires
+only. If the database has no hotspots for the requested period — say so
+honestly; do NOT substitute recent fires for the past period.
 
 Example workflows:
 
@@ -974,6 +1039,75 @@ def handle_chat_message(message, bbox=None, history=None):
     }
 
 
+def _validation_to_geojson(result):
+    """Build a typed GeoJSON FeatureCollection for the app map from a
+    run_validation() result (the '_geo' GeoDataFrames).
+
+    Feature properties.type values: validation_gt (Rosleskhoz, blue),
+    validation_strela (Strela detections, red), validation_burn (Strela
+    burn polygons, orange), validation_zone (industrial zones, gray),
+    validation_fp / validation_fn (false positives / misses, when
+    detection metrics were computed). Coordinates are rounded to 5
+    decimals and burn polygons simplified to keep the chat payload small.
+    """
+    import pandas as pd
+
+    def _features(gdf, feat_type, simplify_tol=0.0, drop_cols=()):
+        if gdf is None or len(gdf) == 0:
+            return []
+        gdf = gdf.copy()
+        for c in drop_cols:
+            if c in gdf.columns:
+                gdf = gdf.drop(columns=[c])
+        for c in gdf.columns:
+            if c != 'geometry' and pd.api.types.is_datetime64_any_dtype(gdf[c]):
+                gdf[c] = gdf[c].dt.strftime('%Y-%m-%d %H:%M')
+        gdf['type'] = feat_type
+        try:
+            def _round_coords(geom):
+                # Координаты в 5 знаках (~1 м) — чтобы payload чата не
+                # раздувался. shapely.ops.transform доступен во всех
+                # версиях shapely (в отличие от Geometry.round, 2.0+);
+                # функция принимает x, y раздельно (вызов func(*coord)).
+                if geom is None:
+                    return geom
+                return shapely_transform(
+                    lambda x, y: (round(x, 5), round(y, 5)), geom)
+
+            g = gdf.geometry
+            if simplify_tol > 0:
+                g = g.apply(
+                    lambda x: x.simplify(simplify_tol, preserve_topology=True)
+                    if x is not None else x)
+            g = g.apply(_round_coords)
+            gdf['geometry'] = g
+            gdf = gdf[~gdf.geometry.is_empty]
+        except Exception:
+            logger.exception('Validation geojson: geometry post-processing failed')
+        if len(gdf) == 0:
+            return []
+        return json.loads(gdf.to_json()).get('features', [])
+
+    geo = result.get('_geo') or {}
+    features = []
+    # latitude/longitude в GT дублируют геометрию — не отправляем
+    features += _features(geo.get('gt'), 'validation_gt',
+                          drop_cols=('latitude', 'longitude'))
+    features += _features(geo.get('strela_fires'), 'validation_strela')
+    features += _features(geo.get('strela_burns'), 'validation_burn',
+                          simplify_tol=0.001)
+    # MCD64A1 — маска выгорания (растр), с которой как раз шло сравнение
+    features += _features(geo.get('modis_burn'), 'validation_modis',
+                          simplify_tol=0.001)
+    features += _features(geo.get('industrial_zones'), 'validation_zone',
+                          simplify_tol=0.0002)
+    features += _features(geo.get('fp_points'), 'validation_fp')
+    features += _features(geo.get('fn_points'), 'validation_fn')
+    if not features:
+        return None
+    return {'type': 'FeatureCollection', 'features': features}
+
+
 def execute_tool(name, args, context_bbox=None):
     """Execute a tool and return results."""
     bbox = args.get('bbox') or context_bbox
@@ -981,8 +1115,35 @@ def execute_tool(name, args, context_bbox=None):
     if name == 'search_fires':
         source = args.get('source', 'all')
         days = args.get('days', 1)
+        start_date = args.get('start_date')
+        end_date = args.get('end_date')
 
-        if source == 'all':
+        if start_date and end_date:
+            # Явный исторический период — очаги из БД «Стрелы»
+            # (FIRMS NRT хранит только ~2 недели, для прошлого периода он
+            # бесполезен)
+            from django.contrib.gis.geos import Polygon as _Poly
+            from fires.models import FireHotspot
+            s = datetime.strptime(start_date, '%Y-%m-%d')
+            e = datetime.strptime(end_date, '%Y-%m-%d') + timedelta(days=1)
+            qs = FireHotspot.objects.filter(
+                location__within=_Poly.from_bbox(tuple(float(x) for x in bbox)),
+                detected_at__gte=s, detected_at__lt=e,
+            ).order_by('detected_at')
+            fires = [
+                {
+                    'latitude': o.location.y,
+                    'longitude': o.location.x,
+                    'brightness': o.brightness,
+                    'confidence': o.confidence,
+                    'frp': o.frp,
+                    'source': o.source,
+                    'daynight': o.daynight,
+                    'detected_at': o.detected_at,
+                }
+                for o in qs
+            ]
+        elif source == 'all':
             from .firms_client import fetch_all_sources
             fires = fetch_all_sources(bbox=bbox, days=days)
         else:
@@ -1404,6 +1565,28 @@ def execute_tool(name, args, context_bbox=None):
             'geojson': labeled,
             'data_type': 'routes',
         }
+
+    elif name == 'run_validation':
+        from .validation.pipeline import run_validation
+
+        try:
+            result = run_validation(
+                bbox=bbox,
+                start_date=args.get('start_date'),
+                end_date=args.get('end_date'),
+                region_name=args.get('region_name'),
+            )
+        except Exception as e:
+            logger.exception('Validation failed')
+            return {'summary': {'error': f'Validation failed: {str(e)}'}}
+        out = {'summary': result['summary']}
+        geojson = _validation_to_geojson(result)
+        if geojson:
+            # data_type 'validation' — фронтенд рисует результат отдельным
+            # слоем «Валидация» на карте приложения
+            out['geojson'] = geojson
+            out['data_type'] = 'validation'
+        return out
 
     elif name == 'control_layers':
         action_type = args.get('action')
