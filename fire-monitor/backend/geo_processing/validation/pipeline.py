@@ -18,6 +18,9 @@ import pandas as pd
 
 from .config import (
     BURN_SEVERITIES,
+    DEDUPE_DEFAULT,
+    DEDUPE_DISTANCE_M,
+    DEDUPE_WINDOW_DAYS,
     GROUND_TRUTH_DIR,
     MCD64A1_DIR,
     STRELA_DIR,
@@ -36,7 +39,7 @@ MAX_BBOX_DEG = 30.0
 
 
 def run_validation(bbox, start_date, end_date, source='auto',
-                   ensure_data=True, region_name=None):
+                   ensure_data=True, region_name=None, dedupe=None):
     """
     Run the full validation pipeline.
 
@@ -46,6 +49,8 @@ def run_validation(bbox, start_date, end_date, source='auto',
         source: 'auto' | 'db' | 'files' — where Strela data comes from
         ensure_data: download missing MCD64A1 tiles when needed
         region_name: human-readable label for the report
+        dedupe: None (use VAL_DEDUPE env default) | True/False — merge raw
+            per-pass detections into unique fire spots before matching
 
     Returns a dict with metrics, artifacts and a compact 'summary' (for the
     LLM / REST client). The '_geo' key carries GeoDataFrames for the map
@@ -71,8 +76,11 @@ def run_validation(bbox, start_date, end_date, source='auto',
 
     # 2. Strela fire detections (optional for the pipeline)
     strela_fires = None
+    dedupe_info = None
     try:
         strela_fires = load_strela_fires(bbox, start_date, end_date, source)
+        strela_fires, dedupe_info = _dedupe_detections(strela_fires, dedupe,
+                                                        warnings)
     except ValidationDataError as e:
         warnings.append(f'Детекции: {e}')
 
@@ -125,6 +133,8 @@ def run_validation(bbox, start_date, end_date, source='auto',
         'source': source,
         'gt_fires': int(len(gt)),
         'strela_fires': int(len(strela_fires)) if strela_fires is not None else 0,
+        'strela_fires_raw': (dedupe_info or {}).get('raw'),
+        'dedupe': dedupe_info,
         'strela_burn_polygons': int(len(strela_burns)) if strela_burns is not None else 0,
         'detection': detection,
         'burns': burns,
@@ -212,6 +222,29 @@ def _fp_industrial_analysis(fp_points, zones_gdf, buffer_m=None):
         'fp_near_zones': n_near,
         'note': note,
     }
+
+
+def _dedupe_detections(strela, dedupe, warnings):
+    """Merge raw per-pass detections into unique fire spots when enabled.
+
+    dedupe: None -> env default (VAL_DEDUPE), else explicit bool.
+    Returns (gdf, info); info is None when dedup is off or not applicable.
+    """
+    if strela is None or strela.empty or dedupe is False:
+        return strela, None
+    if dedupe is None and not DEDUPE_DEFAULT:
+        return strela, None
+    from .metrics import deduplicate_detections
+    out, info = deduplicate_detections(strela, DEDUPE_DISTANCE_M,
+                                       DEDUPE_WINDOW_DAYS)
+    if info:
+        warnings.append(
+            f'Дедупликация: {info["raw"]:,} сырых детекций → '
+            f'{info["clusters"]:,} уникальных очагов '
+            f'({info["distance_m"]:.0f} м, ±{info["time_window_days"]:g} дн.)')
+    else:
+        warnings.append('Дедупликация пропущена: нет времени детекции')
+    return out, info
 
 
 # ---------------------------------------------------------------------------
@@ -307,6 +340,10 @@ def build_summary(result):
         'strela_fires': result['strela_fires'],
         'strela_burn_polygons': result['strela_burn_polygons'],
     }
+    dd = result.get('dedupe')
+    if dd:
+        s['strela_fires_raw'] = dd['raw']
+        s['dedupe'] = dd
     d = result.get('detection')
     if d:
         s['detection'] = {

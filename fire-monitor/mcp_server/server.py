@@ -244,6 +244,7 @@ async def run_validation(
     start_date: str,
     end_date: str,
     region_name: str | None = None,
+    dedupe: bool | None = None,
 ) -> dict:
     """
     Validate "Strela" system data against ground truth: Rosleshoz fire registry
@@ -261,6 +262,8 @@ async def run_validation(
         start_date: Period start in YYYY-MM-DD format
         end_date: Period end in YYYY-MM-DD format
         region_name: Optional human-readable region name for the report
+        dedupe: Optional — merge raw per-pass detections into unique fire spots
+            before matching (default: server env VAL_DEDUPE)
 
     Returns:
         Dict with metrics (precision, recall, f1, iou, area_correlation),
@@ -269,6 +272,8 @@ async def run_validation(
     payload = {'bbox': bbox, 'start_date': start_date, 'end_date': end_date}
     if region_name:
         payload['region_name'] = region_name
+    if dedupe is not None:
+        payload['dedupe'] = dedupe
 
     async with httpx.AsyncClient(timeout=3600) as client:
         response = await client.post(

@@ -27,6 +27,8 @@ from .config import (
     BURN_TIME_WINDOW_DAYS,
     BURN_BUFFER_METERS,
     BUFFER_METERS,
+    DEDUPE_DISTANCE_M,
+    DEDUPE_WINDOW_DAYS,
     DETECTION_TIME_WINDOW_DAYS,
     EQUAL_AREA_CRS,
     WGS84_CRS,
@@ -95,13 +97,18 @@ def validate_detection(gt, strela, buffer_m=BUFFER_METERS,
     Compare Strela fire detections (points) with the Rosleshoz registry (points).
 
     Matching rule: a Strela detection matches a GT fire when it falls inside
-    the geodesic buffer (buffer_m) around the GT fire point AND
-    |detected_at - fire_start_date| <= time_window_days.
-    Assignment is greedy 1:1 (closest in time, then in distance).
+    the geodesic buffer (buffer_m) around the GT fire point AND within the
+    time window. For deduplicated spots (first_at/last_at columns present)
+    the window is measured against the spot's activity period: the fire
+    start date may fall anywhere inside [first_at, last_at] (distance 0)
+    or within time_window_days of it. Otherwise the window is measured
+    against detected_at. Assignment is greedy 1:1 (closest in time, then
+    in distance).
 
     Args:
         gt: GeoDataFrame (WGS84 points) with 'fire_start_date' (datetime)
-        strela: GeoDataFrame (WGS84 points) with 'detected_at' (datetime)
+        strela: GeoDataFrame (WGS84 points) with 'detected_at' (datetime);
+            optional 'first_at'/'last_at' for deduplicated fire spots
 
     Returns dict: tp, fp, fn, precision, recall, f1, totals, samples,
     fp_points/fn_points (GeoDataFrames), warnings.
@@ -147,19 +154,45 @@ def validate_detection(gt, strela, buffer_m=BUFFER_METERS,
     gt_buffered = geodesic_buffer(gt, buffer_m).reset_index(drop=True)
     window = timedelta(days=time_window_days)
 
-    joined = gpd.sjoin(strela, gt_buffered, how='inner', predicate='intersects')
-    si_list = (joined['_index'].tolist() if '_index' in joined.columns
-               else list(range(len(joined))))
-    gi_list = (joined['_index_right'].tolist() if '_index_right' in joined.columns
-               else list(range(len(joined))))
+    # Carry explicit ids through the join: geopandas renames the sjoin index
+    # columns across versions (_index/_index_right vs index_left/index_right),
+    # and a positional fallback breaks when one GT fire matches many
+    # detections (len(joined) > len(gt)).
+    strela_j = strela.copy()
+    gt_j = gt_buffered.copy()
+    strela_j['_strela_id'] = strela.index
+    gt_j['_gt_id'] = gt_buffered.index
+    joined = gpd.sjoin(strela_j, gt_j, how='inner', predicate='intersects')
+    si_list = joined['_strela_id'].tolist()
+    gi_list = joined['_gt_id'].tolist()
+
+    # Deduplicated spots carry their activity period: the fire start date
+    # matches anywhere inside [first_at, last_at], not only at the first
+    # detection (clouds can hide the start; VIIRS usually sees the fire
+    # a few days later).
+    has_activity = (has_time and 'first_at' in strela.columns
+                    and 'last_at' in strela.columns)
 
     pairs = []
     for si, gi in zip(si_list, gi_list):
         si, gi = int(si), int(gi)
         dt_s = 0.0
         if has_time:
-            dt = abs(pd.Timestamp(strela.loc[si, 'detected_at'])
-                     - pd.Timestamp(gt.loc[gi, 'fire_start_date']))
+            fire_start = pd.Timestamp(gt.loc[gi, 'fire_start_date'])
+            if has_activity:
+                first_at = pd.Timestamp(strela.loc[si, 'first_at'])
+                last_at = pd.Timestamp(strela.loc[si, 'last_at'])
+                if pd.isna(fire_start) or pd.isna(first_at) or pd.isna(last_at):
+                    continue
+                if fire_start < first_at:
+                    dt = first_at - fire_start
+                elif fire_start > last_at:
+                    dt = fire_start - last_at
+                else:
+                    dt = pd.Timedelta(0)
+            else:
+                dt = abs(pd.Timestamp(strela.loc[si, 'detected_at'])
+                         - fire_start)
             if pd.isna(dt) or dt > window:
                 continue
             dt_s = dt.total_seconds()
@@ -179,6 +212,136 @@ def validate_detection(gt, strela, buffer_m=BUFFER_METERS,
     fp_idx = [i for i in range(len(strela)) if i not in used_s]
     fn_idx = [i for i in range(len(gt)) if i not in used_g]
     return _build(tp, fp, fn, fp_idx, fn_idx)
+
+
+# ---------------------------------------------------------------------------
+# Detection deduplication: raw per-pass points -> unique fire spots
+# ---------------------------------------------------------------------------
+
+def deduplicate_detections(gdf, distance_m=DEDUPE_DISTANCE_M,
+                           time_window_days=DEDUPE_WINDOW_DAYS):
+    """
+    Merge raw per-pass fire detections into unique fire spots.
+
+    Relation: two detections belong to the same spot when they are within
+    distance_m of each other AND their detection times differ by at most
+    time_window_days; a spot is a connected component under this relation
+    (the same rule as detection matching, so one spot is comparable to one
+    registered fire). The cluster representative is the EARLIEST detection.
+
+    Args:
+        gdf: GeoDataFrame (WGS84 points) with 'detected_at' (datetime).
+        distance_m / time_window_days: spot merge rule.
+
+    Returns:
+        (deduped GeoDataFrame, info): the deduped frame keeps each spot's
+        representative row plus cluster stats (cluster_size, first_at,
+        last_at, days_active; frp_max / frp_mean when 'frp' exists);
+        info = {'raw', 'clusters', 'distance_m', 'time_window_days'}.
+        (gdf unchanged, None) when dedup is not applicable (fewer than 2
+        points or no usable detection times).
+    """
+    n = len(gdf)
+    if n < 2 or 'detected_at' not in gdf.columns:
+        return gdf, None
+    t = pd.to_datetime(gdf['detected_at'], errors='coerce')
+    if t.isna().all():
+        return gdf, None
+
+    from collections import defaultdict
+    from pyproj import Transformer
+
+    transformer = Transformer.from_crs(WGS84_CRS, EQUAL_AREA_CRS, always_xy=True)
+    xy = transformer.transform(
+        np.asarray(gdf.geometry.x, dtype=float),
+        np.asarray(gdf.geometry.y, dtype=float))
+    x, y = np.asarray(xy[0], dtype=float), np.asarray(xy[1], dtype=float)
+
+    d = float(distance_m)
+    d2 = d * d
+    win_s = float(timedelta(days=time_window_days).total_seconds())
+
+    valid = t.notna().to_numpy()
+    t0 = t.min()
+    ts = np.where(valid, (t - t0).dt.total_seconds().to_numpy(), -1.0)
+
+    # Grid buckets (cell = distance_m): a pair within d can only sit in the
+    # same or adjacent cells, so 9 buckets per point is the full candidate
+    # set. Buckets are filled in time order; for each new point we only scan
+    # the recent tail of each bucket (the time window).
+    cell = max(int(d), 1)
+    ci = np.floor(x / cell).astype(np.int64)
+    cj = np.floor(y / cell).astype(np.int64)
+
+    parent = list(range(n))
+
+    def find(a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb and ra > rb:
+            ra, rb = rb, ra
+        if ra != rb:
+            parent[rb] = ra
+
+    buckets = defaultdict(list)
+    for i in np.argsort(ts, kind='stable'):
+        if not valid[i]:
+            continue  # no time — cannot be merged into a spot
+        ti = ts[i]
+        ii, jj = int(ci[i]), int(cj[i])
+        for di in (-1, 0, 1):
+            for dj in (-1, 0, 1):
+                lst = buckets.get((ii + di, jj + dj))
+                if not lst:
+                    continue
+                for j in reversed(lst):
+                    if ti - ts[j] > win_s:
+                        break  # time-ordered: older entries are out of window
+                    dx = x[i] - x[j]
+                    dy = y[i] - y[j]
+                    if dx * dx + dy * dy <= d2:
+                        union(int(i), int(j))
+        buckets[(ii, jj)].append(int(i))
+
+    groups = defaultdict(list)
+    for i in range(n):
+        groups[find(i)].append(i)
+
+    reps = {}
+    for members in groups.values():
+        reps[min(members, key=lambda i: (ts[i], i))] = members
+
+    order_reps = sorted(reps)
+    deduped = gdf.loc[order_reps].copy().reset_index(drop=True)
+    deduped['cluster_size'] = [len(reps[r]) for r in order_reps]
+    first_s = np.array([ts[r] for r in order_reps])
+    last_s = np.array([max(ts[j] for j in reps[r]) for r in order_reps])
+    deduped['first_at'] = t0 + pd.to_timedelta(first_s, unit='s')
+    deduped['last_at'] = t0 + pd.to_timedelta(last_s, unit='s')
+    deduped['days_active'] = np.round(
+        np.clip(last_s - first_s + 86400.0, 86400.0, None) / 86400.0, 1)
+    if 'frp' in gdf.columns:
+        frp = pd.to_numeric(gdf['frp'], errors='coerce').to_numpy()
+        stats = []
+        for r in order_reps:
+            vals = frp[list(reps[r])]
+            vals = vals[~np.isnan(vals)]
+            stats.append((float(vals.max()), float(vals.mean())) if vals.size
+                         else (float('nan'), float('nan')))
+        deduped['frp_max'] = [s[0] for s in stats]
+        deduped['frp_mean'] = [s[1] for s in stats]
+
+    return deduped, {
+        'raw': int(n),
+        'clusters': int(len(order_reps)),
+        'distance_m': d,
+        'time_window_days': float(time_window_days),
+    }
 
 
 # ---------------------------------------------------------------------------

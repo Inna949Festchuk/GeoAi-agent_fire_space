@@ -3,6 +3,14 @@ NASA FIRMS (Fire Information for Resource Management System) API client.
 
 Downloads active fire hotspots from MODIS and VIIRS sensors.
 API docs: https://firms.modaps.eosdis.nasa.gov/api/
+
+IMPORTANT: the FIRMS /api/area/csv/ endpoint serves NEAR-REAL-TIME data only.
+The last URL segment is "days back from today" (1..5), NOT a calendar date —
+a historical date there returns HTTP 400 "Invalid day range". Historical
+VIIRS/MODIS detections cannot be fetched via this API: order them manually
+from the FIRMS Archive Download page (firms.modaps.eosdis.nasa.gov/download/)
+or via NASA LAADS/CMR granules, then import into
+data/strela/viirs_detections.geojson (validation picks it up automatically).
 """
 
 import requests
@@ -61,7 +69,8 @@ def fetch_active_fires(
     Args:
         source: Sensor source (VIIRS_SNPP, VIIRS_NOAA20, MODIS_Aqua, MODIS_Terra)
         bbox: Bounding box as (minx, miny, maxx, maxy) in WGS84
-        days: Number of days to look back (1-5 for NRT, 1-10 for archive)
+        days: Number of days to look back from today (1-5, NRT data only;
+              the FIRMS API does not serve historical dates)
         api_key: FIRMS API key (defaults to settings.FIRMS_API_KEY)
 
     Returns:
@@ -82,8 +91,8 @@ def fetch_active_fires(
         # FIRMS API expects: west,south,east,north (lon,lat,lon,lat)
         area = f'{minx},{miny},{maxx},{maxy}'
 
-    # NRT sources only support 1-5 days, archive supports 1-10 days
-    # For simplicity, cap at 5 days for all sources
+    # FIRMS /api/area/csv/ serves NRT data only: the API expects 1..5 days
+    # back from today (a calendar date there returns HTTP 400)
     days = min(days, 5)
 
     # Use /api/area/csv/ endpoint for bounding box queries

@@ -63,6 +63,27 @@ class DetectionMetricsTest(TestCase):
         self.assertEqual(res['fp'], 1)
         self.assertEqual(res['fn'], 1)
 
+    def test_many_to_one_matches_use_real_indices(self):
+        # Regression (geopandas >= 1.0 renames sjoin index columns): with more
+        # join rows than GT fires, indices must map to real rows, not
+        # positions. Four Strela points all inside GT B's 500 m buffer.
+        gt = gpd.GeoDataFrame(
+            {'fire_start_date': pd.to_datetime(['2024-07-10', '2024-07-15'])},
+            geometry=[Point(100.0, 52.0), Point(101.0, 53.0)], crs='EPSG:4326')
+        strela = gpd.GeoDataFrame(
+            {'detected_at': pd.to_datetime(['2024-07-15 12:00'] * 4)},
+            geometry=[Point(101.0005, 53.0005), Point(101.001, 53.001),
+                      Point(101.0015, 53.0005), Point(101.0005, 53.0015)],
+            crs='EPSG:4326')
+        res = metrics.validate_detection(gt, strela)
+        self.assertEqual(res['tp'], 1)
+        self.assertEqual(res['fp'], 3)
+        self.assertEqual(res['fn'], 1)
+        self.assertEqual(res['strela_total'], 4)
+        self.assertEqual(res['gt_total'], 2)
+        self.assertAlmostEqual(res['precision'], 1 / 4)
+        self.assertAlmostEqual(res['recall'], 0.5)
+
     def test_geodesic_buffer_is_in_meters(self):
         pt = gpd.GeoDataFrame(geometry=[Point(100.0, 52.0)], crs='EPSG:4326')
         buf = metrics.geodesic_buffer(pt, 500)
@@ -71,6 +92,98 @@ class DetectionMetricsTest(TestCase):
         span_deg = buf.geometry.iloc[0].bounds[2] - buf.geometry.iloc[0].bounds[0]
         self.assertAlmostEqual(span_deg / 2, expected_half_span_deg,
                                delta=expected_half_span_deg * 0.15)
+
+
+class DeduplicationTest(TestCase):
+    def _gdf(self, lons, lats, times, frp=None):
+        cols = {'detected_at': pd.to_datetime(times)}
+        if frp is not None:
+            cols['frp'] = frp
+        return gpd.GeoDataFrame(
+            cols, geometry=[Point(lo, la) for lo, la in zip(lons, lats)],
+            crs='EPSG:4326')
+
+    def test_close_in_space_and_time_merge_into_one_spot(self):
+        # ~205 m apart, 1 day apart -> one spot
+        g = self._gdf([100.0, 100.003], [52.0, 52.0],
+                      ['2024-07-10 12:00', '2024-07-11 12:00'])
+        out, info = metrics.deduplicate_detections(g)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(info['raw'], 2)
+        self.assertEqual(info['clusters'], 1)
+
+    def test_time_window_prevents_merge(self):
+        # ~205 m apart but 5 days apart -> two spots
+        g = self._gdf([100.0, 100.003], [52.0, 52.0],
+                      ['2024-07-10 12:00', '2024-07-15 12:00'])
+        out, info = metrics.deduplicate_detections(g)
+        self.assertEqual(info['clusters'], 2)
+
+    def test_distance_prevents_merge(self):
+        # ~820 m apart, same time -> two spots
+        g = self._gdf([100.0, 100.012], [52.0, 52.0],
+                      ['2024-07-10 12:00', '2024-07-10 12:00'])
+        out, info = metrics.deduplicate_detections(g)
+        self.assertEqual(info['clusters'], 2)
+
+    def test_transitive_chain_is_one_spot(self):
+        # A-B ~300 m, B-C ~300 m, A-C ~600 m, same day -> one spot
+        g = self._gdf([100.0, 100.0044, 100.0088], [52.0, 52.0, 52.0],
+                      ['2024-07-10 12:00'] * 3)
+        out, info = metrics.deduplicate_detections(g)
+        self.assertEqual(info['clusters'], 1)
+        self.assertEqual(int(out['cluster_size'].iloc[0]), 3)
+
+    def test_representative_is_earliest_and_cluster_stats(self):
+        g = self._gdf([100.0, 100.001, 100.001], [52.0, 52.0, 52.0],
+                      ['2024-07-10 06:00', '2024-07-11 06:00',
+                       '2024-07-11 09:00'],
+                      frp=[5.0, 20.0, 8.0])
+        out, info = metrics.deduplicate_detections(g)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(str(out['detected_at'].iloc[0]), '2024-07-10 06:00:00')
+        self.assertEqual(int(out['cluster_size'].iloc[0]), 3)
+        self.assertEqual(str(out['last_at'].iloc[0]), '2024-07-11 09:00:00')
+        self.assertAlmostEqual(float(out['frp_max'].iloc[0]), 20.0)
+        self.assertAlmostEqual(float(out['frp_mean'].iloc[0]), 11.0)
+        self.assertAlmostEqual(float(out['days_active'].iloc[0]), 2.1,
+                               delta=0.05)
+
+    def test_not_applicable_returns_none_info(self):
+        g = self._gdf([100.0], [52.0], ['2024-07-10 12:00'])
+        out, info = metrics.deduplicate_detections(g)
+        self.assertIsNone(info)
+        self.assertEqual(len(out), 1)
+
+    def test_activity_period_match_inside_span(self):
+        # fire start 07-18, spot active 07-12..07-20: inside the activity
+        # period -> TP even though the first detection is 6 days earlier
+        # (matching against detected_at alone would give FN)
+        gt = gpd.GeoDataFrame(
+            {'fire_start_date': pd.to_datetime(['2024-07-18'])},
+            geometry=[Point(100.0, 52.0)], crs='EPSG:4326')
+        strela = gpd.GeoDataFrame(
+            {'detected_at': pd.to_datetime(['2024-07-12']),
+             'first_at': pd.to_datetime(['2024-07-12']),
+             'last_at': pd.to_datetime(['2024-07-20'])},
+            geometry=[Point(100.001, 52.001)], crs='EPSG:4326')
+        res = metrics.validate_detection(gt, strela)
+        self.assertEqual(res['tp'], 1)
+        self.assertEqual(res['fn'], 0)
+
+    def test_activity_period_outside_window_no_match(self):
+        # fire start 07-20, spot active until 07-14 (gap 6 days > 3) -> FN
+        gt = gpd.GeoDataFrame(
+            {'fire_start_date': pd.to_datetime(['2024-07-20'])},
+            geometry=[Point(100.0, 52.0)], crs='EPSG:4326')
+        strela = gpd.GeoDataFrame(
+            {'detected_at': pd.to_datetime(['2024-07-12']),
+             'first_at': pd.to_datetime(['2024-07-12']),
+             'last_at': pd.to_datetime(['2024-07-14'])},
+            geometry=[Point(100.001, 52.001)], crs='EPSG:4326')
+        res = metrics.validate_detection(gt, strela)
+        self.assertEqual(res['tp'], 0)
+        self.assertEqual(res['fn'], 1)
 
 
 class BurnMetricsTest(TestCase):

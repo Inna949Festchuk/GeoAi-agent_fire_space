@@ -59,6 +59,15 @@ def _status(value, target, higher_is_better=True):
     return '✅ мет' if ok else '⚠️ не мет'
 
 
+def _plural(n, one, few, many):
+    n10, n100 = n % 10, n % 100
+    if n10 == 1 and n100 != 11:
+        return one
+    if 2 <= n10 <= 4 and not 12 <= n100 <= 14:
+        return few
+    return many
+
+
 def _write_markdown(result, path):
     region = result.get('region_name') or f"bbox {result['bbox']}"
     src = result.get('source') or 'auto'
@@ -70,9 +79,16 @@ def _write_markdown(result, path):
     lines.append(f'**Регион:** {region}  ')
     lines.append(f'**Период:** {result["start_date"]} — {result["end_date"]}  ')
     lines.append(f'**Сгенерирован:** {result["generated_at"]}  ')
+    dd = result.get('dedupe')
+    if dd:
+        strela_data = (f'Стрела: **{dd["clusters"]:,}** уникальных очагов '
+                       f'(из **{dd["raw"]:,}** сырых детекций), '
+                       f'**{result["strela_burn_polygons"]}** полигонов гарей')
+    else:
+        strela_data = (f'Стрела: **{result["strela_fires"]}** детекций, '
+                       f'**{result["strela_burn_polygons"]}** полигонов гарей')
     lines.append(f'**Данные:** Рослесхоз (GT): **{result["gt_fires"]}** пожаров | '
-                 f'Стрела: **{result["strela_fires"]}** детекций, '
-                 f'**{result["strela_burn_polygons"]}** полигонов гарей')
+                 f'{strela_data}')
     lines.append('')
 
     # 1. Detection
@@ -94,8 +110,19 @@ def _write_markdown(result, path):
                      '(обнаружено Стрелой, нет в реестре Рослесхоза)')
         lines.append(f"- False Negatives (FN): **{d['fn']}** "
                      '(есть в реестре, Стрела не обнаружила)')
+        window_note = (f"±{d['time_window_days']} дней"
+                       if not result.get('dedupe')
+                       else (f"±{d['time_window_days']} дней от периода "
+                             'активности очага'))
         lines.append(f"- Буфер: {d['buffer_m']:.0f} м геодезический; "
-                     f"временной допуск: ±{d['time_window_days']} дней")
+                     f"временной допуск: {window_note}")
+        dd = result.get('dedupe')
+        if dd:
+            lines.append(
+                f"- Дедупликация: {dd['raw']:,} сырых детекций → "
+                f"{dd['clusters']:,} уникальных очагов "
+                f"({dd['distance_m']:.0f} м, ±{dd['time_window_days']:g} дн.) — "
+                'метрики считаются по очагам, а не по каждому пролёту спутника')
     else:
         lines.append('_Не рассчитана — нет сопоставимых данных (см. ограничения)._')
     lines.append('')
@@ -253,17 +280,29 @@ def _write_map(result, path):
 
     strela = geo.get('strela_fires')
     if strela is not None and not strela.empty:
-        cluster = MarkerCluster(name='Стрела (обнаружено)', icon='red')
+        is_spots = 'cluster_size' in strela.columns
+        cluster = MarkerCluster(
+            name='Стрела (уникальные очаги)' if is_spots
+            else 'Стрела (обнаружено)',
+            icon='red')
         for _, row in strela.iterrows():
             c = row.geometry.centroid
             date_s = (str(row.get('detected_at'))[:10]
                       if pd.notna(row.get('detected_at')) else '')
             frp_s = (f"{row.get('frp'):.1f} МВт"
                      if pd.notna(row.get('frp')) else '')
+            spot_s = ''
+            if is_spots and pd.notna(row.get('cluster_size')):
+                last_s = str(row.get('last_at'))[:10]
+                size = int(row['cluster_size'])
+                spot_s = (f', очаг: {size} '
+                          + _plural(size, 'детекция', 'детекции', 'детекций')
+                          + (f' {date_s}–{last_s}'
+                             if last_s and last_s > date_s else ''))
             folium.CircleMarker(
                 location=[c.y, c.x], radius=4, color='#d62728',
                 fill=True, fill_opacity=0.8,
-                popup=f'Детекция Стрелы: {date_s}, FRP {frp_s}',
+                popup=f'Детекция Стрелы: {date_s}, FRP {frp_s}{spot_s}',
             ).add_to(cluster)
         cluster.add_to(m)
         has_layer = True

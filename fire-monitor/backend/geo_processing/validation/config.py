@@ -22,6 +22,16 @@ EARTHDATA_TOKEN = os.environ.get('EARTHDATA_TOKEN', '').strip()
 # --- Validation parameters (fire_monitor_validation_pipeline skill) ---
 BUFFER_METERS = float(os.environ.get('VAL_BUFFER_METERS', '500'))
 DETECTION_TIME_WINDOW_DAYS = int(os.environ.get('VAL_DETECTION_WINDOW_DAYS', '3'))
+# Detection dedup: raw per-pass VIIRS/MODIS detections re-detect the same
+# spot on every orbit (~2 passes/day), so before matching they are merged
+# into unique fire spots under the same rule as matching (distance + time
+# window). Defaults follow BUFFER_METERS / DETECTION_TIME_WINDOW_DAYS.
+DEDUPE_DEFAULT = os.environ.get('VAL_DEDUPE', '1').strip().lower() in (
+    '1', 'true', 'yes', 'on')
+DEDUPE_DISTANCE_M = float(os.environ.get('VAL_DEDUPE_DISTANCE_M',
+                                         str(BUFFER_METERS)))
+DEDUPE_WINDOW_DAYS = float(os.environ.get('VAL_DEDUPE_WINDOW_DAYS',
+                                          str(DETECTION_TIME_WINDOW_DAYS)))
 # MCD64A1 is a monthly composite — the burn date can differ by 2-3 weeks from
 # the real mapping date, so the window is wider than for detection (3 days).
 BURN_TIME_WINDOW_DAYS = int(os.environ.get('VAL_BURN_WINDOW_DAYS', '20'))

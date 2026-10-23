@@ -677,6 +677,8 @@ def validation_run_view(request):
     Body: {bbox: [minx, miny, maxx, maxy], start_date, end_date,
            source: 'auto'|'db'|'files' (default 'auto'),
            ensure_data: true (default) — download missing MCD64A1 tiles,
+           dedupe: true|false (default from VAL_DEDUPE env) — merge raw
+           detections into unique fire spots before matching,
            region_name: optional label for the report}
 
     Returns: metrics (Precision/Recall/F1, IoU, area correlation), counts,
@@ -708,6 +710,7 @@ def validation_run_view(request):
             source=request.data.get('source', 'auto'),
             ensure_data=bool(request.data.get('ensure_data', True)),
             region_name=request.data.get('region_name'),
+            dedupe=request.data.get('dedupe'),
         )
     except ValidationDataError as e:
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)

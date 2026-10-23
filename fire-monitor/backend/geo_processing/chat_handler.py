@@ -545,6 +545,10 @@ TOOLS = [
                         'type': 'string',
                         'description': 'Human-readable region name for the report (e.g. "Иркутская область")',
                     },
+                    'dedupe': {
+                        'type': 'boolean',
+                        'description': 'Merge raw per-pass detections into unique fire spots before matching (500 m, +/-3 days). Default true.',
+                    },
                 },
                 'required': ['bbox', 'start_date', 'end_date'],
             },
@@ -1575,6 +1579,7 @@ def execute_tool(name, args, context_bbox=None):
                 start_date=args.get('start_date'),
                 end_date=args.get('end_date'),
                 region_name=args.get('region_name'),
+                dedupe=args.get('dedupe'),
             )
         except Exception as e:
             logger.exception('Validation failed')

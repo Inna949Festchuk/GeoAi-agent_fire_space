@@ -159,6 +159,17 @@ python -m geoai_agent.burn_mapping \
     --output-dir "./results_2024_july/"
 ```
 
+> ⚠️ **Важно: исторические детекции VIIRS/MODIS нельзя скачать через FIRMS API.**
+> Эндпоинт `/api/area/csv/` отдаёт только NRT-данные за последние 1–5 дней:
+> последний сегмент URL — это «сколько дней назад», а не календарная дата
+> (запрос по исторической дате возвращает `HTTP 400: Invalid day range.
+> Expects [1..5].`). Исторический архив заказывают вручную со страницы
+> [FIRMS Archive Download](https://firms.modaps.eosdis.nasa.gov/download/)
+> (авторизация Earthdata Login или email-код) и кладут в
+> `data/strela/viirs_detections.geojson` — движок валидации подхватит файл
+> автоматически (`source='auto'` / `'files'`). Альтернатива: гранулы
+> VIIRS I-band (HDF5) через NASA LAADS DAAC / CMR по Earthdata-токену.
+
 ---
 
 ### **Этап 2: Обработка и сравнение (2-3 дня)**

@@ -1,4 +1,10 @@
 metric,value,target,status
+precision,0.1398,>=0.8,not met
+recall,0.6252,>=0.75,not met
+f1,0.2285,>=0.77,not met
+tp,959,,
+fp,5901,,
+fn,575,,
 burn_iou,0.1235,>0.6,not met
 burn_f1,0.2199,>0.5,not met
 burn_area_correlation,0.8786,>0.8,met
