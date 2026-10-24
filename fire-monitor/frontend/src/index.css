@@ -530,6 +530,53 @@ body {
   cursor: not-allowed;
 }
 
+/* Огненно-оранжевый акцент для всех переключателей подслоёв валидации */
+.ios-toggle--fire input:checked + .ios-toggle-slider {
+  background: linear-gradient(135deg, #ff8c42, #ff6b35);
+  box-shadow: 0 0 10px rgba(255, 107, 53, 0.45);
+}
+
+/* Валидационные подслои (оверлей на карте) */
+.validation-sublayers {
+  position: absolute;
+  top: 58px;
+  right: 10px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;               /* больше воздуха между элементами */
+  padding: 18px 18px;      /* больше воздуха внутри блока */
+  background: rgba(22, 33, 62, 0.92);
+  border: 1px solid #0f3460;
+  border-radius: 14px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(6px);
+  min-width: 240px;
+}
+
+.validation-sublayer-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;               /* воздух между кружком, подписью и тумблером */
+  cursor: pointer;
+  user-select: none;
+}
+
+.validation-sublayer-color {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.15);
+}
+
+.validation-sublayer-label {
+  flex: 1;
+  font-size: 13px;
+  color: #e6e6f0;
+  line-height: 1.4;
+}
+
 /* Loading */
 .loading {
   display: flex;
