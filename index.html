@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Мониторинг пожаров</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="map"></div>
+
+  <!-- Панель слоёв -->
+  <aside class="panel panel-layers">
+    <div class="panel-header">
+      <span class="panel-title">Слои</span>
+      <button class="layer-collapse-btn" title="Свернуть">▼</button>
+    </div>
+    <div class="panel-body">
+      <label class="ios-toggle ios-toggle-row">
+        <span class="validation-sublayer-label">Спутниковые снимки</span>
+        <input type="checkbox" checked>
+        <span class="ios-toggle-slider"></span>
+      </label>
+
+      <div class="validation-sublayers">
+        <label class="ios-toggle ios-toggle-row"><span class="validation-sublayer-color" style="background-color: rgb(59, 130, 246);"></span><span class="validation-sublayer-label">Рослесхоз (GT)</span><input type="checkbox"><span class="ios-toggle-slider"></span></label>
+        <label class="ios-toggle ios-toggle-row"><span class="validation-sublayer-color" style="background-color: rgb(239, 68, 68);"></span><span class="validation-sublayer-label">Детекции Стрела</span><input type="checkbox"><span class="ios-toggle-slider"></span></label>
+        <label class="ios-toggle ios-toggle-row"><span class="validation-sublayer-color" style="background-color: rgb(234, 88, 12);"></span><span class="validation-sublayer-label">Гари Стрела</span><input type="checkbox"><span class="ios-toggle-slider"></span></label>
+        <label class="ios-toggle ios-toggle-row"><span class="validation-sublayer-color" style="background-color: rgb(22, 163, 74);"></span><span class="validation-sublayer-label">NASA MCD64A1 (эталон)</span><input type="checkbox"><span class="ios-toggle-slider"></span></label>
+        <label class="ios-toggle ios-toggle-row"><span class="validation-sublayer-color" style="background-color: rgb(156, 163, 175);"></span><span class="validation-sublayer-label">Промзоны</span><input type="checkbox" checked=""><span class="ios-toggle-slider"></span></label>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Чат-панель «Спросите о пожарах» -->
+  <section class="panel panel-chat">
+    <div class="panel-header">
+      <span class="panel-title">Ассистент по пожарам</span>
+      <button class="layer-collapse-btn" title="Свернуть">▼</button>
+    </div>
+    <div class="panel-body chat-body">
+      <div class="chat-messages" id="chatMessages">
+        <div class="chat-msg chat-msg-bot">Здравствуйте! Спросите меня о текущих пожарах и детекциях.</div>
+      </div>
+      <div class="chat-input-row">
+        <textarea placeholder="Спросите о пожарах..." rows="1"></textarea>
+        <button class="btn-send" title="Отправить сообщение" disabled="">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="19" x2="12" y2="5"></line>
+            <polyline points="5 12 12 5 19 12"></polyline>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,279 @@
+/* ============================================================
+   Мониторинг пожаров — палитра: светло/тёмно-графитовые фоны,
+   огненно-оранжевые акценты (чат, кнопки, переключатели слоёв)
+   ============================================================ */
+
+:root {
+  /* Графитовые оттенки */
+  --graphite-950: #17181b;   /* самый тёмный графит (фон карты/оверлеи) */
+  --graphite-900: #1e2024;   /* фон приложения */
+  --graphite-800: #26292e;   /* панели */
+  --graphite-700: #32363d;   /* приподнятые элементы, инпуты */
+  --graphite-600: #414650;   /* границы / ховеры */
+  --graphite-300: #b6bac1;   /* вторичный текст */
+  --graphite-100: #e8eaed;   /* основной текст на тёмном */
+
+  /* Светло-графитовый режим (панели поверх светлой подложки) */
+  --graphite-light-100: #f2f3f5;
+  --graphite-light-200: #e4e6e9;
+  --graphite-light-300: #d3d6da;
+
+  /* Огненный оранжевый */
+  --fire-600: #ea580c;
+  --fire-500: #f97316;
+  --fire-400: #fb923c;
+  --fire-glow: rgba(249, 115, 22, .45);
+
+  --text-on-fire: #ffffff;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif;
+  /* Фон приложения — светло/тёмно графитовый */
+  background: linear-gradient(160deg, var(--graphite-light-100) 0%, var(--graphite-light-300) 45%, var(--graphite-700) 100%);
+  color: var(--graphite-100);
+}
+
+#map {
+  position: fixed;
+  inset: 0;
+  /* имитация подложки карты в графитовых тонах */
+  background:
+    radial-gradient(1200px 700px at 30% 20%, #3a3f47 0%, transparent 60%),
+    radial-gradient(900px 600px at 75% 70%, #2b2e34 0%, transparent 55%),
+    var(--graphite-900);
+}
+
+/* ------------------------- Панели ------------------------- */
+.panel {
+  position: fixed;
+  background: rgba(38, 41, 46, .92);           /* graphite-800 со стеклянным эффектом */
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--graphite-600);
+  border-radius: 16px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .45);
+  overflow: hidden;
+}
+
+.panel-layers { top: 16px; left: 16px; width: 320px; }
+.panel-chat   { bottom: 16px; right: 16px; width: 360px; }
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  background: var(--graphite-700);             /* шапка панелей — графит */
+  border-bottom: 1px solid var(--graphite-600);
+}
+
+.panel-title {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  color: var(--graphite-100);
+}
+
+.panel-body { padding: 14px 16px; }
+
+/* ------------- Кнопка сворачивания — ОГНЕННО-ОРАНЖЕВАЯ ------------- */
+.layer-collapse-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 26px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text-on-fire);
+  background: linear-gradient(135deg, var(--fire-500), var(--fire-600));
+  box-shadow: 0 2px 8px var(--fire-glow);
+  transition: filter .15s ease, transform .15s ease, box-shadow .15s ease;
+}
+.layer-collapse-btn:hover {
+  filter: brightness(1.12);
+  box-shadow: 0 3px 12px var(--fire-glow);
+  transform: translateY(-1px);
+}
+.layer-collapse-btn:active { transform: translateY(0); filter: brightness(.95); }
+
+/* Свёрнутая панель */
+.panel.collapsed .panel-body { display: none; }
+
+/* ---------------- iOS-переключатели ---------------- */
+.ios-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.ios-toggle input { display: none; }
+
+.ios-toggle-slider {
+  position: relative;
+  margin-left: auto;
+  flex: 0 0 auto;
+  width: 44px;
+  height: 26px;
+  border-radius: 999px;
+  background: var(--graphite-600);
+  transition: background .2s ease, box-shadow .2s ease;
+}
+.ios-toggle-slider::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .35);
+  transition: transform .2s ease;
+}
+.ios-toggle input:checked + .ios-toggle-slider {
+  /* включённый тумблер — огненный оранжевый */
+  background: linear-gradient(135deg, var(--fire-500), var(--fire-600));
+  box-shadow: 0 0 8px var(--fire-glow);
+}
+.ios-toggle input:checked + .ios-toggle-slider::after { transform: translateX(18px); }
+
+.validation-sublayer-color {
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .12) inset;
+}
+
+.validation-sublayer-label {
+  font-size: 13px;
+  color: var(--graphite-100);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ------- Подслои: чуть выше элементов + больше воздуха ------- */
+.validation-sublayers {
+  display: flex;
+  flex-direction: column;
+  /* увеличенные отступы = «воздух» между строками */
+  gap: 16px;
+  padding: 16px 12px;
+  margin-top: 14px;
+  background: rgba(23, 24, 27, .35);          /* слегка утопленная графитовая зона */
+  border: 1px solid var(--graphite-600);
+  border-radius: 12px;
+}
+
+.validation-sublayers .ios-toggle-row {
+  min-height: 32px;                            /* строки стали выше */
+  padding: 6px 8px;
+  border-radius: 10px;
+  transition: background .15s ease;
+}
+.validation-sublayers .ios-toggle-row:hover { background: rgba(65, 70, 80, .5); }
+
+/* ------------------------- Чат ------------------------- */
+.chat-body { display: flex; flex-direction: column; gap: 12px; }
+
+.chat-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.chat-msg {
+  max-width: 85%;
+  padding: 10px 12px;
+  border-radius: 14px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.chat-msg-bot {
+  align-self: flex-start;
+  background: var(--graphite-700);
+  color: var(--graphite-100);
+  border-bottom-left-radius: 4px;
+}
+.chat-msg-user {
+  align-self: flex-end;
+  /* сообщения пользователя — огненно-оранжевые */
+  background: linear-gradient(135deg, var(--fire-500), var(--fire-600));
+  color: var(--text-on-fire);
+  border-bottom-right-radius: 4px;
+}
+
+.chat-input-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.chat-input-row textarea {
+  flex: 1;
+  resize: none;
+  min-height: 42px;
+  max-height: 120px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--graphite-100);
+  background: var(--graphite-950);
+  border: 1px solid var(--graphite-600);
+  border-radius: 12px;
+  outline: none;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.chat-input-row textarea::placeholder { color: var(--graphite-300); }
+.chat-input-row textarea:focus {
+  /* фокус ввода — огненная подсветка */
+  border-color: var(--fire-500);
+  box-shadow: 0 0 0 3px var(--fire-glow);
+}
+
+/* -------- Кнопка отправки — ОГНЕННО-ОРАНЖЕВАЯ -------- */
+.btn-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  color: var(--text-on-fire);
+  background: linear-gradient(135deg, var(--fire-400), var(--fire-600));
+  box-shadow: 0 4px 14px var(--fire-glow);
+  transition: filter .15s ease, transform .15s ease, box-shadow .15s ease;
+}
+.btn-send:hover:not(:disabled) {
+  filter: brightness(1.12);
+  box-shadow: 0 6px 18px var(--fire-glow);
+  transform: translateY(-1px);
+}
+.btn-send:active:not(:disabled) { transform: translateY(0); filter: brightness(.95); }
+.btn-send:disabled {
+  /* остаётся оранжевой, но приглушённой */
+  background: linear-gradient(135deg, #7a4a2a, #6b3d22);
+  box-shadow: none;
+  cursor: default;
+  opacity: .85;
+}
+
+/* Тонкий скроллбар в графитовом стиле */
+.chat-messages::-webkit-scrollbar { width: 6px; }
+.chat-messages::-webkit-scrollbar-thumb { background: var(--graphite-600); border-radius: 3px; }
