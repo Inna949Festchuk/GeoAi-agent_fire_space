@@ -612,17 +612,26 @@ VALIDATION (run_validation) RULES:
   Krasnoyarsk krai: [73, 55, 100, 72]).
 - The tool compares: (1) Strela fire detections vs the Rosleshoz registry ->
   Precision/Recall/F1; (2) Strela burn polygons vs NASA MCD64A1 -> IoU, area correlation.
+- Strela data sources (source='auto' by default): the database (FireHotspot/BurnArea)
+  AND local files in data/strela/ (viirs_detections.geojson — downloaded NASA FIRMS
+  archive for historical periods, burned_areas.geojson). Historical detections
+  (e.g. July 2024) live in that local file — validation reads it automatically,
+  NO import into the database is needed. Do NOT tell the user to "download FIRMS
+  and import it" when the validation period can be covered by the local archive file.
 - The first run for a period downloads NASA MCD64A1 tiles (~4 files) and takes several
   minutes — tell the user it may take a few minutes, then report the result.
 - Report ONLY the metrics returned by the tool (Markdown table:
   | Метрика | Значение | Цель | Статус |). NEVER invent numbers.
+- If the tool returns metrics, the data for the period EXISTS — report the metrics.
+  Never ask the admin to import data in the same reply where run_validation succeeded.
 - The tool ALSO draws the result on the application map — layer «Валидация»
   (blue dots — Rosleskhoz GT, red dots — Strela detections, orange polygons —
   Strela burns, gray — industrial zones). Mention in the reply that the layers
   appeared on the map (toggle: panel «Слои карты»).
 - If the tool returns an error about missing data (e.g. no Strela detections for the
-  period) — explain to the user what exactly is missing and how to fix it
-  (run detection first / provide files). Do not guess.
+  period in DB or files) — explain to the user what exactly is missing and how to fix it
+  (run detection first / provide the data/strela/viirs_detections.geojson archive file).
+  Do not guess.
 
 MARKDOWN FORMATTING (the reply is rendered as GitHub-flavored Markdown, tables are enabled):
 - Write replies in Markdown: headings (##), lists, **bold** for key values (areas, counts, dates).

@@ -76,16 +76,19 @@ const LAYERS_CONFIG = [
   },
 ]
 
-// iOS-style Toggle компонент
-function Toggle({ checked, onChange, color = '#e94560' }) {
+// iOS-style Toggle компонент.
+// Активный цвет у всех переключателей единый — огненно-оранжевый (CSS .ios-toggle-slider).
+function Toggle({ checked, onChange, disabled = false, row = false, children = null }) {
   return (
-    <label className="ios-toggle">
+    <label className={`ios-toggle${row ? ' ios-toggle-row' : ''}${disabled ? ' ios-toggle-disabled' : ''}`}>
+      {children}
       <input
         type="checkbox"
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
+        disabled={disabled}
       />
-      <span className="ios-toggle-slider" style={{ '--toggle-color': color }}></span>
+      <span className="ios-toggle-slider"></span>
     </label>
   )
 }
@@ -117,28 +120,27 @@ function LayerItem({ layer, enabled, onToggle, hasData, validationSublayers }) {
           <Toggle
             checked={enabled && hasData}
             onChange={onToggle}
-            color={layer.color}
           />
         </div>
       </div>
 
-      {/* Вертикальный список подслоёв валидации с чекбоксами */}
+      {/* Подслои валидации — iOS-переключатели с огненно-оранжевым активным состоянием */}
       {layer.id === 'validation' && hasData && validationSublayers && showLegend && (
         <div className="validation-sublayers">
           {validationSublayers.map((sub) => (
-            <label key={sub.id} className="validation-sublayer-item">
-              <input
-                type="checkbox"
-                checked={sub.checked}
-                onChange={(e) => sub.onChange(e.target.checked)}
-                disabled={!enabled}
-              />
+            <Toggle
+              key={sub.id}
+              row
+              checked={sub.checked}
+              onChange={sub.onChange}
+              disabled={!enabled}
+            >
               <span
                 className="validation-sublayer-color"
                 style={{ backgroundColor: sub.color }}
               ></span>
               <span className="validation-sublayer-label">{sub.label}</span>
-            </label>
+            </Toggle>
           ))}
         </div>
       )}

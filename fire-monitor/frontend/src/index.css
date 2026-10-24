@@ -481,53 +481,30 @@ body {
   color: #ccc;
 }
 
-/* Подслои валидации — вертикальный список с чекбоксами */
+/* Подслои валидации — iOS-переключатели, «воздух» между строками */
 .validation-sublayers {
-  margin-top: 8px;
-  padding: 8px 12px;
+  margin-top: 12px;
+  padding: 10px;
   background: rgba(15, 52, 96, 0.3);
-  border-radius: 6px;
+  border-radius: 10px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-}
-
-.validation-sublayer-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  font-size: 12px;
-  color: #e0e0e0;
-}
-
-.validation-sublayer-item input[type="checkbox"] {
-  width: 14px;
-  height: 14px;
-  cursor: pointer;
-  accent-color: #3b82f6;
-}
-
-.validation-sublayer-item input[type="checkbox"]:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
+  gap: 10px;
 }
 
 .validation-sublayer-color {
   width: 12px;
   height: 12px;
-  border-radius: 2px;
+  border-radius: 3px;
   border: 1px solid rgba(255, 255, 255, 0.3);
   flex-shrink: 0;
 }
 
 .validation-sublayer-label {
   flex: 1;
+  font-size: 12px;
+  color: #e0e0e0;
   user-select: none;
-}
-
-.validation-sublayer-item:hover {
-  color: #fff;
 }
 
 /* iOS Toggle */
@@ -537,6 +514,56 @@ body {
   width: 44px;
   height: 24px;
   flex-shrink: 0;
+}
+
+/* Полная строка: цветной маркер + подпись + переключатель справа */
+.ios-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.ios-toggle-row:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* Слайдер в режиме строки — «пилюля» 44×24 справа, не на всю строку */
+.ios-toggle-row .ios-toggle-slider {
+  position: relative;
+  top: auto;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  width: 44px;
+  height: 24px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* Чекбокс вне flex-потока — чтобы не создавал лишний gap (селектор
+   input:checked + .ios-toggle-slider работает по порядку DOM) */
+.ios-toggle-row input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  pointer-events: none;
+}
+
+/* Disabled-строка (например, подслои при выключенном слое «Валидация») */
+.ios-toggle-disabled {
+  cursor: not-allowed;
+}
+
+.ios-toggle-disabled .validation-sublayer-color,
+.ios-toggle-disabled .validation-sublayer-label {
+  opacity: 0.5;
 }
 
 .ios-toggle input {
@@ -570,8 +597,9 @@ body {
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
+/* Огненно-оранжевое активное состояние — у всех переключателей */
 .ios-toggle input:checked + .ios-toggle-slider {
-  background-color: var(--toggle-color, #e94560);
+  background: linear-gradient(90deg, #ff9500 0%, #ff4d00 100%);
 }
 
 .ios-toggle input:checked + .ios-toggle-slider:before {
