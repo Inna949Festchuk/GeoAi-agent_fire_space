@@ -15,5 +15,6 @@ media/
 .DS_Store
 .vscode/
 .idea/
+fire-monitor/reports/validation_map.html
 
 
