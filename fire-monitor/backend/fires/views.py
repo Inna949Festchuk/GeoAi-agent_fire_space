@@ -679,7 +679,8 @@ def validation_run_view(request):
            ensure_data: true (default) — download missing MCD64A1 tiles,
            dedupe: true|false (default from VAL_DEDUPE env) — merge raw
            detections into unique fire spots before matching,
-           region_name: optional label for the report}
+           region_name: optional label for the report,
+           prompt: optional user prompt printed at the top of the report}
 
     Returns: metrics (Precision/Recall/F1, IoU, area correlation), counts,
     warnings and generated artifacts (reports/validation_report.md,
@@ -711,6 +712,7 @@ def validation_run_view(request):
             ensure_data=bool(request.data.get('ensure_data', True)),
             region_name=request.data.get('region_name'),
             dedupe=request.data.get('dedupe'),
+            request_prompt=request.data.get('prompt'),
         )
     except ValidationDataError as e:
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)

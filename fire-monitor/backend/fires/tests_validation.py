@@ -186,6 +186,53 @@ class DeduplicationTest(TestCase):
         self.assertEqual(res['fn'], 1)
 
 
+class ReportPromptTest(TestCase):
+    """report: the prompt that triggered the run is printed at the top."""
+
+    def _result(self, **extra):
+        result = {
+            'region_name': 'Иркутская область',
+            'bbox': [96, 46.71, 125.96, 63.98],
+            'start_date': '2024-07-01',
+            'end_date': '2024-07-31',
+            'generated_at': '2026-10-24T12:00:00',
+            'source': 'auto',
+            'gt_fires': 10,
+            'strela_fires': 20,
+            'strela_burn_polygons': 0,
+            'detection': None,
+            'burns': None,
+            'fp_industrial': None,
+            'warnings': [],
+        }
+        result.update(extra)
+        return result
+
+    def test_markdown_contains_request_prompt(self):
+        from geo_processing.validation import reporting
+        result = self._result(request_prompt=(
+            'Запусти валидацию системы «Стрела» инструментом run_validation с параметрами:\n'
+            '- bbox: [96, 46.71, 125.96, 63.98]\n'
+            '- dedupe: true'))
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / 'validation_report.md'
+            reporting._write_markdown(result, p)
+            text = p.read_text(encoding='utf-8')
+        self.assertIn('Промт, сформировавший отчёт:', text)
+        self.assertIn('Запусти валидацию системы «Стрела»', text)
+        # промт стоит после заголовка, до блока с параметрами
+        self.assertLess(text.index('Промт, сформировавший отчёт'),
+                        text.index('**Регион:**'))
+
+    def test_markdown_without_prompt_has_no_block(self):
+        from geo_processing.validation import reporting
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / 'validation_report.md'
+            reporting._write_markdown(self._result(), p)
+            text = p.read_text(encoding='utf-8')
+        self.assertNotIn('Промт, сформировавший отчёт', text)
+
+
 class BurnMetricsTest(TestCase):
     def _setup_grid(self):
         """100x100 px grid @500 m in EPSG:3576 centered on Irkutsk (52N, 104E)

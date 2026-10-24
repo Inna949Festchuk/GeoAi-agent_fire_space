@@ -990,7 +990,7 @@ def handle_chat_message(message, bbox=None, history=None):
             logger.info(
                 f'[chat] iteration={iteration} tool={func_name} args={_args_for_log(func_name, func_args)}'
             )
-            result = execute_tool(func_name, func_args, bbox)
+            result = execute_tool(func_name, func_args, bbox, request_prompt=message)
             _remember_tool_data(func_name, result)
             actions.append({
                 'tool': func_name,
@@ -1112,8 +1112,12 @@ def _validation_to_geojson(result):
     return {'type': 'FeatureCollection', 'features': features}
 
 
-def execute_tool(name, args, context_bbox=None):
-    """Execute a tool and return results."""
+def execute_tool(name, args, context_bbox=None, request_prompt=None):
+    """Execute a tool and return results.
+
+    request_prompt: the user's original chat message — passed to tools that
+    embed the triggering request into artifacts (e.g. run_validation report).
+    """
     bbox = args.get('bbox') or context_bbox
 
     if name == 'search_fires':
@@ -1580,6 +1584,7 @@ def execute_tool(name, args, context_bbox=None):
                 end_date=args.get('end_date'),
                 region_name=args.get('region_name'),
                 dedupe=args.get('dedupe'),
+                request_prompt=request_prompt,
             )
         except Exception as e:
             logger.exception('Validation failed')

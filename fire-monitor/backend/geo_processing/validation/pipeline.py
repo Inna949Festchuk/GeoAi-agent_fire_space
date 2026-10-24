@@ -39,7 +39,8 @@ MAX_BBOX_DEG = 30.0
 
 
 def run_validation(bbox, start_date, end_date, source='auto',
-                   ensure_data=True, region_name=None, dedupe=None):
+                   ensure_data=True, region_name=None, dedupe=None,
+                   request_prompt=None):
     """
     Run the full validation pipeline.
 
@@ -51,6 +52,10 @@ def run_validation(bbox, start_date, end_date, source='auto',
         region_name: human-readable label for the report
         dedupe: None (use VAL_DEDUPE env default) | True/False — merge raw
             per-pass detections into unique fire spots before matching
+        request_prompt: the user request/prompt that triggered this run —
+            printed at the top of the report so the report can be
+            reproduced. When omitted, a canonical prompt is built from the
+            parameters.
 
     Returns a dict with metrics, artifacts and a compact 'summary' (for the
     LLM / REST client). The '_geo' key carries GeoDataFrames for the map
@@ -66,6 +71,23 @@ def run_validation(bbox, start_date, end_date, source='auto',
             f'Maximum is {MAX_BBOX_DEG}° x {MAX_BBOX_DEG}°.')
     if end < start:
         raise ValidationDataError('end_date must be >= start_date')
+
+    # Prompt that triggered the run — printed at the top of the report.
+    # When not provided, build a canonical one from the parameters.
+    if request_prompt:
+        prompt_text = str(request_prompt).strip()
+    else:
+        dedupe_on = 'true' if (dedupe if dedupe is not None else DEDUPE_DEFAULT) else 'false'
+        bbox_s = '[{}]'.format(', '.join(f'{v:g}' for v in bbox))
+        prompt_text = (
+            'Запусти валидацию системы «Стрела» инструментом run_validation с параметрами:\n'
+            f'- bbox: {bbox_s}\n'
+            f'- start_date: {start_date}\n'
+            f'- end_date: {end_date}\n'
+            f'- source: {source}\n'
+            f'- dedupe: {dedupe_on}'
+            + (f'\n- region_name: «{region_name}»' if region_name else '')
+        )
 
     warnings = []
 
@@ -131,6 +153,7 @@ def run_validation(bbox, start_date, end_date, source='auto',
         'end_date': str(end.date()),
         'generated_at': datetime.now().isoformat(timespec='seconds'),
         'source': source,
+        'request_prompt': prompt_text,
         'gt_fires': int(len(gt)),
         'strela_fires': int(len(strela_fires)) if strela_fires is not None else 0,
         'strela_fires_raw': (dedupe_info or {}).get('raw'),

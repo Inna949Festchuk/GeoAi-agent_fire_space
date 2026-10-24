@@ -76,6 +76,14 @@ def _write_markdown(result, path):
     lines = []
     lines.append('# 📊 Отчёт о валидации системы «Стрела»')
     lines.append('')
+    prompt_text = (result.get('request_prompt') or '').strip()
+    if prompt_text:
+        lines.append('**Промт, сформировавший отчёт:**')
+        lines.append('')
+        lines.append('```')
+        lines.extend(prompt_text.splitlines())
+        lines.append('```')
+        lines.append('')
     lines.append(f'**Регион:** {region}  ')
     lines.append(f'**Период:** {result["start_date"]} — {result["end_date"]}  ')
     lines.append(f'**Сгенерирован:** {result["generated_at"]}  ')

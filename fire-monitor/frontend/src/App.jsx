@@ -255,7 +255,9 @@ function App() {
       // Update stats after chat response
       const searchBbox = bbox || [75, 55, 110, 75]
       try {
-        const statsData = await fetchStats({ bbox: searchBbox, days })
+        // days: 1 — как в начальном загрузке (строка loadInitialData);
+        // fetchStats без days не ставил бы фильтр date_from
+        const statsData = await fetchStats({ bbox: searchBbox, days: 1 })
         setStats(statsData)
       } catch (err) {
         console.error('Failed to update stats:', err)
