@@ -119,6 +119,7 @@ fire-monitor/
 │   │   ├── fire_filter.py   # Фильтрация ложных срабатываний
 │   │   ├── burn_severity.py # Расчёт dNBR по Sentinel-2
 │   │   ├── stac_client.py   # Клиент STAC (Planetary Computer)
+│   │   ├── validation/      # Валидация run_validation: GT, дедупликация, метрики
 │   │   └── chat_handler.py  # Обработка AI-чата
 │   ├── manage.py
 │   └── requirements.txt
@@ -128,7 +129,7 @@ fire-monitor/
 │   ├── package.json
 │   └── vite.config.js
 ├── mcp_server/
-│   ├── server.py            # MCP-сервер для AI-интеграции
+│   ├── server.py            # MCP-сервер для AI-интеграции (10 tools, включая run_validation)
 │   └── requirements.txt
 ├── db/
 │   ├── Dockerfile           # PostGIS образ
@@ -138,6 +139,9 @@ fire-monitor/
 ├── docker-compose.yml       # Production
 ├── docker-compose.dev.yml   # Development
 ├── .env.example             # Шаблон переменных окружения
+├── validation/              # Валидация: VALIDREADME.md + downnasagov.py (MCD64A1)
+├── skills/                  # Промты и документация скиллов (валидация)
+├── data/                    # Данные: ground_truth/, mcd64a1/, strela/
 └── Seince.md                # Научное обоснование алгоритмов
 ```
 
@@ -163,6 +167,28 @@ fire-monitor/
 - NBR = (NIR - SWIR2) / (NIR + SWIR2)
 - dNBR = NBR_pre - NBR_post
 - Классификация: unburned (<100), low (100-269), moderate (270-439), high (≥440)
+
+### Валидация (run_validation, 2026-10-20 → 23)
+
+Количественная валидация «Стрелы» по независимым источникам:
+- **Детекция:** Рослесхоз 1T-ИСДМ (GT) vs детекции VIIRS/MODIS — P/R/F1,
+  геодезический буфер 500 м; **дедупликация** сырых детекций в уникальные
+  очаги (≤500 м + ≤±3 дня, `VAL_DEDUPE=1`); сопоставление **по периоду
+  активности очага** `[first_at, last_at]` ±3 дня; жадная 1:1-привязка.
+- **Гари:** Sentinel-2 dNBR vs NASA MCD64A1 (коллекция 6.1) — IoU,
+  корреляция площадей (Пирсон), burn F1, отклонение, лаг; ±20 дней,
+  буфер 1 км; площади/буферы — в EPSG:3576.
+- **Точки входа:** REST `POST /api/validation/run/` (+ `/prepare/`,
+  `GET /status/`), чат-тул `run_validation` (сводка + слой «Валидация»
+  на карте), MCP-тул `run_validation`.
+- **Данные:** `data/ground_truth/` (Рослесхоз), `data/mcd64a1/` (растры),
+  `data/strela/` (`viirs_detections.geojson` — из FIRMS Archive для истории;
+  либо БД FireHotspot/BurnArea, `source=auto|db|files`).
+- **Артефакты:** `reports/validation_report.md`, `validation_map.html`,
+  `metrics_summary.csv`.
+- **Эко-параметры:** `VAL_*` в `.env` (буферы, окна, `VAL_DEDUPE*`).
+- **Тесты:** `backend/fires/tests_validation.py` — 16 оффлайн-тестов
+  (`manage.py test fires.tests_validation`).
 
 ## Recent Improvements (Current Session)
 

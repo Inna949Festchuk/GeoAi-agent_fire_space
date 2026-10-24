@@ -20,7 +20,11 @@ Automate the quantitative evaluation of the "Strela" wildfire monitoring system.
 
 ## 📥 Inputs
 1. **System Outputs (Strela):**
-   - `viirs_detections.geojson` (Points: active fire hotspots, post-Overture Maps filtering)
+   - `viirs_detections.geojson` (Points: active fire hotspots, post-Overture Maps filtering).
+     *Historical periods (older than 5 days): the FIRMS API serves NRT data only —
+     order the archive manually from the [FIRMS Archive Download](https://firms.modaps.eosdis.nasa.gov/download/)
+     page (Earthdata login) and convert the JSON to `viirs_detections.geojson`
+     (properties: `detected_at`, `frp`, `confidence`, `source`, `satellite`).*
    - `burned_areas.geojson` (Polygons: Sentinel-2 dNBR burn scars)
 2. **Target Parameters:**
    - `region` (e.g., "Иркутская область", "Якутия")
@@ -55,13 +59,27 @@ Automate the quantitative evaluation of the "Strela" wildfire monitoring system.
 
 ### Phase 2: Active Fire Validation (Point-to-Point)
 *Comparing Strela VIIRS detections vs Rosleshoz ISDM registry.*
-1. **Geodesic Buffering:**
+1. **Deduplication into unique fire spots** (on by default, `VAL_DEDUPE=1`):
+   - raw per-pass detections (one burning spot is re-detected on every orbit,
+     ~2 passes/day) are merged into **unique fire spots** — connected components
+     under the rule: two detections are in the same spot when they are
+     <= `VAL_DEDUPE_DISTANCE_M` (500 m) apart AND <= `VAL_DEDUPE_WINDOW_DAYS` (3 days)
+     apart in time;
+   - the spot representative is the EARLIEST detection; spot stats:
+     `cluster_size`, `first_at`, `last_at`, `days_active`, `frp_max`, `frp_mean`;
+   - metrics and maps operate on spots, not on raw per-pass points
+     (335 075 raw points for Irkutsk July 2024 -> 6 860 unique spots).
+2. **Geodesic Buffering:**
    - Do NOT use simple degree buffers. Use `pyproj.Geod` or `shapely` with UTM/Albers Equal Area projection to create a **500m geodesic buffer** around Rosleshoz points (accounts for GPS inaccuracies and VIIRS 375m resolution).
-2. **Spatial Join:**
-   - `sjoin(rosleshoz_buffered, strela_detections, predicate='intersects')`
-3. **Temporal Matching:**
-   - Match only if `|strela_detection_time - rosleshoz_start_date| <= 3 days`.
-4. **Metric Calculation:**
+3. **Spatial Join:**
+   - `sjoin(rosleshoz_buffered, strela_spots, predicate='intersects')`
+4. **Temporal Matching:**
+   - For deduplicated spots: the fire start date matches the spot's **activity period**
+     `[first_at, last_at]` (dt = 0 when the start date falls inside the period — clouds
+     can hide the fire start), or is within 3 days of it;
+   - without dedup (raw points): `|strela_detection_time - rosleshoz_start_date| <= 3 days`.
+   - Assignment is greedy 1:1 (closest in time, then in distance).
+5. **Metric Calculation:**
    - **TP (True Positive):** Matched detections.
    - **FP (False Positive):** Strela detections with no Rosleshoz match (analyze if they fall outside Overture Maps industrial zones).
    - **FN (False Negative):** Rosleshoz fires with no Strela detection.
@@ -84,7 +102,35 @@ Automate the quantitative evaluation of the "Strela" wildfire monitoring system.
 2. **FN Categorization:** Check Sentinel-2 cloud masks (SCL). If FN occurred during high cloud cover, flag as "Sensor Limitation (Optical)".
 3. **Generate Artifacts:**
    - `validation_report.md` (Markdown summary with tables).
-   - `validation_map.html` (Folium interactive map with Ground Truth, Strela, and Industrial layers).
+   - `validation_map.html` (Folium interactive map with Ground Truth, Strela spots, burn scars, MCD64A1, and Industrial layers).
+   - `metrics_summary.csv` (flat metric table).
+4. **App map layer:** the chat tool also returns a typed GeoJSON (`data_type='validation'`),
+   rendered as the "Валидация" layer on the in-app map (GT / spots / burns / MODIS / zones / FP / FN).
+
+### Implementation in the project (v0.0.21+, 2026-10-20)
+
+The workflow above is implemented as the **`run_validation` engine**
+(`backend/geo_processing/validation/`: config, rosleshoz, nasa_client, strela_loader,
+metrics, reporting, pipeline). Entry points:
+- **REST:** `POST /api/validation/run/` (body: `bbox`, `start_date`, `end_date`,
+  `source: auto|db|files`, `ensure_data`, `dedupe`, `region_name`),
+  `POST /api/validation/prepare/`, `GET /api/validation/status/`;
+- **Chat tool:** `run_validation` (same parameters; returns a summary + a typed GeoJSON
+  for the map);
+- **MCP tool:** `run_validation` (proxies REST).
+
+Configurable via env (see `.env.example`): `VAL_BUFFER_METERS`, `VAL_DETECTION_WINDOW_DAYS`,
+`VAL_BURN_WINDOW_DAYS`, `VAL_BURN_BUFFER_METERS`, `VAL_BURN_SEVERITIES`,
+`VAL_MIN_BURN_AREA_HA`, `VAL_EQUAL_AREA_CRS`, `VAL_DEDUPE`, `VAL_DEDUPE_DISTANCE_M`,
+`VAL_DEDUPE_WINDOW_DAYS`. Offline tests: `backend/fires/tests_validation.py`
+(`manage.py test fires.tests_validation`, 16 tests).
+
+Reference results (Irkutsk oblast, July 2024; 335 075 raw FIRMS detections ->
+6 860 unique spots, GT 1 534 fires): **P 14.0% / R 62.5% / F1 22.9%**; burns:
+area correlation **0.879** (target > 0.8), IoU 0.124, mean deviation 78.3%,
+lag -18.5 d (35 polygons). Precision is limited by registry completeness
+(the 1T registry does not include small unregistered fires); recall by the
+1:1 spot-to-fire assignment and the representative-point spatial match.
 
 ---
 

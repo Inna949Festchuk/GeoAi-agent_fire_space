@@ -98,10 +98,11 @@ space/
     │       ├── burn_severity.py    # NBR/dNBR расчёт
     │       ├── fire_filter.py      # Отсев ложных срабатываний
     │       ├── routing.py          # Маршрутизация (OSRM) и поиск (Overpass)
+    │       ├── validation/         # Валидация run_validation: GT, дедупликация, метрики
     │       └── chat_handler.py     # AI чат с function calling + ReAct loop
     │
     ├── mcp_server/                 # FastMCP для внешних AI-агентов
-    │   └── server.py               # 9 MCP tools (включая маршрутизацию)
+    │   └── server.py               # 10 MCP tools (включая run_validation)
     │
     ├── sandbox/                    # Изолированное выполнение Python кода
     │   ├── Dockerfile
@@ -136,10 +137,11 @@ space/
 │  • /api/stats/ — Aggregated statistics                          │
 │  • /api/docs/  — Swagger UI (OpenAPI)                           │
 ├─────────────────────────────────────────────────────────────────┤
-│  FastMCP Server (9 инструментов для внешних AI-агентов)         │
+│  FastMCP Server (10 инструментов для внешних AI-агентов)        │
 │  • search_fires, search_sentinel2                               │
 │  • get_fire_stats, get_burn_stats                               │
 │  • start_fire_detection, start_burn_mapping                     │
+│  • run_validation (валидация: P/R/F1, IoU, корреляция)          │
 │  • build_route_mcp, find_nearest_fire_stations_mcp              │
 │  • execute_python_mcp                                           │
 ├─────────────────────────────────────────────────────────────────┤
@@ -166,7 +168,7 @@ space/
 MCP URL: http://localhost:8001/mcp
 ```
 
-Доступные tools (9 инструментов):
+Доступные tools (10 инструментов):
 
 ### Поиск и анализ
 - `search_fires(bbox, source, days)` — поиск очагов
@@ -175,6 +177,7 @@ MCP URL: http://localhost:8001/mcp
 - `get_burn_stats(bbox)` — статистика гарей
 - `start_fire_detection(bbox)` — запуск детекции пожаров
 - `start_burn_mapping(bbox, pre_date, post_date)` — мульти-тайловое картирование гарей (синхронно, до 16 тайлов)
+- `run_validation(bbox, start_date, end_date, region_name, dedupe)` — валидация «Стрелы» vs Рослесхоз (P/R/F1) + MCD64A1 (IoU, корреляция); артефакты в `reports/`
 
 ### Маршрутизация и геолокация
 - `build_route_mcp(start_lon, start_lat, end_lon, end_lat)` — построение маршрута по дорогам через OSRM
@@ -377,7 +380,26 @@ curl -X POST http://localhost:8000/api/chat/ \
 Это позволяет агенту понимать запросы вида "построй маршруты к тем пожарам" и использовать
 координаты из предыдущих запросов без повторного вызова инструментов.
 
-### 5. Документация API
+### 5. Валидация системы (run_validation)
+
+```bash
+# Запуск валидации (детекция vs Рослесхоз + гари vs MCD64A1; dedupe — дедупликация в очаги)
+curl -X POST http://localhost:8000/api/validation/run/ \
+  -H "Content-Type: application/json" \
+  -d '{"bbox": [96, 46.71, 125.96, 63.98], "start_date": "2024-07-01",
+       "end_date": "2024-07-31", "source": "auto", "ensure_data": true,
+       "dedupe": true, "region_name": "Иркутская область"}'
+
+# Статус подготовленных данных (GT, MCD64A1-кэш, файлы/БД Стрелы)
+curl http://localhost:8000/api/validation/status/
+
+# Предварительная загрузка GT + MCD64A1 (тяжёлый сетевой шаг)
+curl -X POST http://localhost:8000/api/validation/prepare/ \
+  -H "Content-Type: application/json" \
+  -d '{"bbox": [96, 46.71, 125.96, 63.98], "start_date": "2024-07-01", "end_date": "2024-07-31"}'
+```
+
+### 6. Документация API
 
 ```bash
 # Swagger/OpenAPI интерактивная документация
@@ -538,6 +560,12 @@ docker compose exec backend python manage.py update_industrial_zones --bbox 80,5
   - Попапы для пожарных частей (адрес, телефон, расстояние)
   - Объединение всех `custom` данных в один слой
 
+### Этап 8: Валидация системы (2026-10-20 → 23)
+- **`run_validation`** — количественная валидация «Стрелы» по Рослесхоз 1T-ИСДМ (P/R/F1) и NASA MCD64A1 (IoU, корреляция площадей, лаг); три точки входа: REST, AI-чат (слои на карте), MCP
+- **Дедупликация** сырых VIIRS-детекций в уникальные очаги (≤500 м + ≤±3 дня) и **сопоставление по периоду активности очага** — метрики честные по отношению к реестру
+- **Исторические детекции** — вручную из FIRMS Archive (API отдаёт только NRT за 1–5 дней)
+- Справочный результат (Иркутская область, июль 2024): P 14,0% / R 62,5% / F1 22,9% (6 860 очагов vs 1 534 зарегистрированных пожара), корреляция площадей гарей 0,879 ✅
+
 ## Дополнительная информация
 
 - **Научное обоснование**: см. `fire-monitor/Seince.md` — описание алгоритмов определения уверенности пожаров и оценки степени выгорания
@@ -546,6 +574,21 @@ docker compose exec backend python manage.py update_industrial_zones --bbox 80,5
 - **Получение API ключа RouterAI**: https://routerai.ru/settings/keys
 
 ## Обновления и дополнения
+
+### v0.0.22 (2026-10-23) — Валидация: дедупликация в уникальные очаги + сопоставление по периоду активности
+- 🔁 **Дедупликация детекций:** сырые пер-орбитовые VIIRS-точки (июль 2024 — 335 075) сливаются в **уникальные очаги** (connected components ≤500 м + ≤±3 дня; представитель — самая ранняя детекция; статистика cluster_size/first_at/last_at/days_active/frp_max/frp_mean). Включено по умолчанию (`VAL_DEDUPE=1`, настраивается `VAL_DEDUPE_DISTANCE_M` / `VAL_DEDUPE_WINDOW_DAYS`); параметр `dedupe` в REST/чате/MCP. P/R/F1 и все карты — по очагам.
+- ⏱ **Сопоставление по периоду активности:** GT-пожар совпадает с очагом, если дата его начала попадает в `[first_at, last_at]` (dt=0) или в ±3 дня от периода — раньше облака занижали Recall.
+- 📦 **Исторические детекции:** FIRMS API отдаёт только NRT (1–5 дней), поэтому исторический архив заказывается вручную через FIRMS Archive Download → `data/strela/viirs_detections.geojson` (подхватывается автоматически, `source=auto`).
+- 📊 **Результат (Иркутская область, июль 2024):** 335 075 → 6 860 очагов, GT 1 534: P 14,0% / R 62,5% / F1 22,9% (без дедупа P 0,34% — артефакт гранулярности); корреляция площадей гарей 0,879 ✅. Прогон ~2 мин, карта ~19 МБ (vs ~20 мин и 374 МБ без дедупа).
+- 🐛 **Фикс sjoin (geopandas 1.0.1):** колонки индексов в `sjoin` переименованы (`index_right` без подчёркивания) — в `validate_detection` теперь явные ID-колонки через join; + 6 тестов дедупликации (всего 16) в `tests_validation.py`.
+
+### v0.0.21 (2026-10-20) — Инструмент валидации `run_validation`
+- 📊 **Количественная валидация «Стрелы»** (требование стейкхолдеров хакатона): движок `backend/geo_processing/validation/` — Рослесхоз 1T-ИСДМ (GT) + NASA MCD64A1 (эталон гарей).
+- 🔌 **Три точки входа:** REST `POST /api/validation/run/` + `/prepare/` + `GET /status/`, чат-тул `run_validation`, MCP-тул `run_validation` (10-й инструмент).
+- 📐 **Геодезические правила:** буферы в метрах (EPSG:3576), площади только в равновеликой проекции, окно детекции ±3 дня, гарей ±20 дней (MCD64A1 — месячный композит), QA-фильтр MCD64A1.
+- 🗺️ **Слой «Валидация» на карте приложения** (типизированный GeoJSON: GT/Стрела/гари/MODIS/промзоны/FP/FN) + артефакты `reports/validation_report.md`, `validation_map.html`, `metrics_summary.csv`.
+- ⬇️ **MCD64A1 через CMR + LP DAAC** (старые ladsweb allData URL мертвы) — скрипт `validation/downnasagov.py` с кэшем.
+- 🧪 **Оффлайн-тесты** `backend/fires/tests_validation.py` (без сети/БД/MCD64A1).
 
 ### v0.0.19 (2026-10-16) - Добавление 2.5D - базовой карты на основе источников снимков ESRI и радарной матрицы рельефа SRTM
 
@@ -725,7 +768,7 @@ docker compose exec backend python manage.py update_industrial_zones --bbox 80,5
 - Лимит на размер результата: 5 MB
 ---
 
-## 🛠 Инструменты геоагента (19 шт.)
+## 🛠 Инструменты геоагента (20 шт.)
 
 ### 🔥 Данные о пожарах
 1. **`query_fires`** — активные пожары из БД по bbox и датам.
@@ -777,6 +820,8 @@ docker compose exec backend python manage.py update_industrial_zones --bbox 80,5
     *Пример:* «Насколько велик риск для посёлков от пожаров в bbox 75,55,110,75?»
 19. **`execute_python`** — выполнение кода в изолированном sandbox с полным гео-стеком (GDAL/OGR, rasterio, scipy.ndimage, scikit-image, matplotlib `__charts__`, laspy, pyproj). Загрузка данных в PostGIS — генерацией PGDump-скрипта через драйвер GDAL PGDump прямо в коде песочницы.
     *Пример:* «Посчитай среднее и медиану FRP по последним найденным пожарам и построй гистограмму распределения по дням»
+20. **`run_validation`** — валидация «Стрелы» по Рослесхоз (P/R/F1, дедупликация в уникальные очаги, сопоставление по периоду активности) и MCD64A1 (IoU, корреляция площадей); результат — сводка в чате, слой «Валидация» на карте и артефакты в `reports/`.
+    *Пример:* «Запусти валидацию системы за июль 2024 в Иркутской области и покажи метрики»
 
 
 
