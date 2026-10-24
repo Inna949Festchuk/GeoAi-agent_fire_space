@@ -555,6 +555,57 @@ function MapView({
       >
         {basemap === 'esri' ? '🗺️ Обычная карта' : '🛰️ Спутниковая карта'}
       </button>
+
+      {/* Валидационные подслои — переключение в стиле iOS, акцент —
+          огненно-оранжевый (#ff6b35) для всех подобных элементов */}
+      <ValidationSublayersOverlay mapRef={mapRef} />
+    </div>
+  )
+}
+
+// Конфигурация валидационных подслоёв. Цвет чекбокса-переключателя —
+// единый огненно-оранжевый; цветной кружок слева показывает цвет самого
+// слоя на карте.
+const VALIDATION_SUBLAYERS = [
+  { id: 'rosleshoz-gt', label: 'Рослесхоз (GT)', color: '#3b82f6' },
+  { id: 'strela-detections', label: 'Детекции Стрела', color: '#ef4444' },
+  { id: 'strela-burns', label: 'Гари Стрела', color: '#ea580c' },
+  { id: 'nasa-mcd64a1', label: 'NASA MCD64A1 (эталон)', color: '#16a34a' },
+  { id: 'industrial-zones', label: 'Промзоны', color: '#9ca3af' },
+]
+
+function ValidationSublayersOverlay({ mapRef }) {
+  const [enabled, setEnabled] = useState(() =>
+    Object.fromEntries(VALIDATION_SUBLAYERS.map(s => [s.id, true]))
+  )
+
+  const toggle = (id) => setEnabled(prev => ({ ...prev, [id]: !prev[id] }))
+
+  // TODO: здесь будет привязка к реальным maplibre-слоям валидации,
+  // когда они появятся в данных (сейчас блоки управляют только видимостью UI)
+  useEffect(() => {
+    const map = mapRef?.current
+    if (!map) return
+    VALIDATION_SUBLAYERS.forEach(({ id }) => {
+      const layerId = `validation-${id}`
+      if (map.getLayer(layerId)) {
+        map.setLayoutProperty(layerId, 'visibility', enabled[id] ? 'visible' : 'none')
+      }
+    })
+  }, [enabled, mapRef])
+
+  return (
+    <div className="validation-sublayers">
+      {VALIDATION_SUBLAYERS.map(({ id, label, color }) => (
+        <label key={id} className="validation-sublayer-item">
+          <span className="validation-sublayer-color" style={{ backgroundColor: color }}></span>
+          <span className="validation-sublayer-label">{label}</span>
+          <span className="ios-toggle ios-toggle--fire">
+            <input type="checkbox" checked={!!enabled[id]} onChange={() => toggle(id)} />
+            <span className="ios-toggle-slider"></span>
+          </span>
+        </label>
+      ))}
     </div>
   )
 }
