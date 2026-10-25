@@ -1,5 +1,6 @@
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts'
 import ExportButtons from './ExportButtons'
+import { FlameIcon, TrendIcon, MapIcon, ChartIcon, SatelliteIcon } from './OutlineIcons'
 
 // Возвращает «ключ» действия: одинаковые вызовы одного инструмента
 // (например, agent дважды дёрнул search_fires с теми же параметрами)
@@ -38,7 +39,7 @@ function ResultsVisualization({ actions }) {
 
     return (
       <div className="result-chart">
-        <h4>🔥 Поиск пожаров</h4>
+        <h4><FlameIcon size={16} /> Поиск пожаров</h4>
         <ResponsiveContainer width="100%" height={200}>
           <PieChart>
             <Pie
@@ -86,7 +87,7 @@ function ResultsVisualization({ actions }) {
 
     return (
       <div className="result-chart">
-        <h4>📈 Статистика пожаров</h4>
+        <h4><TrendIcon size={16} /> Статистика пожаров</h4>
         <div className="charts-row">
           <div className="mini-chart">
             <div className="chart-title">По источникам</div>
@@ -141,7 +142,8 @@ function ResultsVisualization({ actions }) {
     // Один сводный график: если регион был разбит на несколько ячеек
     // (несколько вызовов map_burn_area), суммы считаются по всем ячейкам.
     const list = Array.isArray(actions) ? actions : [actions]
-    const summary = list.find(a => a.result_summary && !a.result_summary.error)?.result_summary
+    // let — summary перезаписывается сводным объектом при нескольких ячейках
+    let summary = list.find(a => a.result_summary && !a.result_summary.error)?.result_summary
     if (!summary) return null
 
     const totals = {}
@@ -173,7 +175,7 @@ function ResultsVisualization({ actions }) {
 
     return (
       <div className="result-chart">
-        <h4>🗺️ Карта гарей</h4>
+        <h4><MapIcon size={16} /> Карта гарей</h4>
         <ResponsiveContainer width="100%" height={200}>
           <PieChart>
             <Pie
@@ -225,7 +227,7 @@ function ResultsVisualization({ actions }) {
 
     return (
       <div className="result-chart burn-report">
-        <h4>📊 Аналитический отчёт</h4>
+        <h4><ChartIcon size={16} /> Аналитический отчёт</h4>
         <div className="report-id">ID: {reportId}</div>
 
         {severityData.length > 0 && (
@@ -275,7 +277,7 @@ function ResultsVisualization({ actions }) {
 
     return (
       <div className="result-chart">
-        <h4>🛰️ Сцены Sentinel-2</h4>
+        <h4><SatelliteIcon size={16} /> Сцены Sentinel-2</h4>
         <div className="chart-stats">
           <div>Найдено сцен: <strong>{scenesCount}</strong></div>
         </div>

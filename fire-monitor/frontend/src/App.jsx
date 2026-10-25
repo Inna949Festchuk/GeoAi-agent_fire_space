@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import MapView from './components/MapView'
 import ChatPanel from './components/ChatPanel'
 import LayerPanel from './components/LayerPanel'
+import { FlameIcon } from './components/OutlineIcons'
 import { fetchFires, fetchBurns, fetchStats, fetchLatestBurnJob } from './api/client'
 
 // Ключи для localStorage
@@ -299,7 +300,7 @@ function App() {
         />
         
         <div className="sidebar-header">
-          <h1>🔥 Fire Monitor</h1>
+          <h1><FlameIcon size={20} /> Fire Monitor</h1>
           <p>Мониторинг лесных пожаров из космоса</p>
         </div>
 

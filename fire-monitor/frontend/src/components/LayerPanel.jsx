@@ -1,11 +1,21 @@
 import { useState } from 'react'
+import { FlameIcon, PatchIcon, TargetIcon, RouteIcon, StationIcon, ChartIcon, LayersIcon, ChevronIcon } from './OutlineIcons'
+
+// Контурные иконки слоёв (заменяют эмодзи; свечение — класс .ui-outline-icon)
+const LAYER_ICONS = {
+  fires: FlameIcon,
+  burns: PatchIcon,
+  validation: TargetIcon,
+  routes: RouteIcon,
+  fire_stations: StationIcon,
+  custom: ChartIcon,
+}
 
 // Конфигурация слоёв
 const LAYERS_CONFIG = [
   {
     id: 'fires',
     name: 'Очаги пожаров',
-    icon: '🔥',
     color: '#e94560',
     description: 'Термальные аномалии со спутников',
     legend: [
@@ -17,7 +27,6 @@ const LAYERS_CONFIG = [
   {
     id: 'burns',
     name: 'Гари',
-    icon: '🔲',
     color: '#dc2626',
     description: 'Выгоревшие территории (Sentinel-2)',
     legend: [
@@ -30,7 +39,6 @@ const LAYERS_CONFIG = [
   {
     id: 'validation',
     name: 'Валидация',
-    icon: '🎯',
     color: '#3b82f6',
     description: 'Стрела vs Рослесхоз / MCD64A1',
     legend: [
@@ -44,7 +52,6 @@ const LAYERS_CONFIG = [
   {
     id: 'routes',
     name: 'Маршруты',
-    icon: '🛣️',
     color: '#ff6b35',
     description: 'Маршруты по дорогам (OSRM)',
     legend: [
@@ -56,7 +63,6 @@ const LAYERS_CONFIG = [
   {
     id: 'fire_stations',
     name: 'Пожарные части',
-    icon: '🚒',
     color: '#00d4ff',
     description: 'Пожарно-спасательные подразделения',
     legend: [
@@ -66,7 +72,6 @@ const LAYERS_CONFIG = [
   {
     id: 'custom',
     name: 'Результаты анализа',
-    icon: '📊',
     color: '#9d4edd',
     description: 'Данные из Python sandbox',
     legend: [
@@ -96,12 +101,13 @@ function Toggle({ checked, onChange, disabled = false, row = false, children = n
 // Компонент слоя с легендой
 function LayerItem({ layer, enabled, onToggle, hasData, validationSublayers }) {
   const [showLegend, setShowLegend] = useState(false)
+  const Icon = LAYER_ICONS[layer.id]
 
   return (
     <div className={`layer-item ${!hasData ? 'layer-item-disabled' : ''}`}>
       <div className="layer-item-header">
         <div className="layer-item-info">
-          <span className="layer-item-icon">{layer.icon}</span>
+          <span className="layer-item-icon"><Icon /></span>
           <div className="layer-item-text">
             <span className="layer-item-name">{layer.name}</span>
             <span className="layer-item-desc">{layer.description}</span>
@@ -112,9 +118,9 @@ function LayerItem({ layer, enabled, onToggle, hasData, validationSublayers }) {
             <button
               className="layer-legend-btn"
               onClick={() => setShowLegend(!showLegend)}
-              title="Показать легенду"
+              title={showLegend ? 'Скрыть легенду' : 'Показать легенду'}
             >
-              {showLegend ? '▼' : '▶'}
+              <ChevronIcon size={14} className="toggle-chevron" />
             </button>
           )}
           <Toggle
@@ -205,7 +211,7 @@ function LayerPanel({
   return (
     <div className={`layer-panel ${isCollapsed ? 'layer-panel-collapsed' : ''}`}>
       <div className="layer-panel-header">
-        <h3>🗺️ Слои карты</h3>
+        <h3><LayersIcon size={16} /> Слои карты</h3>
         <div className="layer-panel-header-controls">
           <span className="layer-count">{activeLayersCount} активных</span>
           <button
@@ -213,7 +219,7 @@ function LayerPanel({
             onClick={() => setIsCollapsed(!isCollapsed)}
             title={isCollapsed ? 'Развернуть' : 'Свернуть'}
           >
-            {isCollapsed ? '▲' : '▼'}
+            <ChevronIcon size={14} className="toggle-chevron" />
           </button>
         </div>
       </div>

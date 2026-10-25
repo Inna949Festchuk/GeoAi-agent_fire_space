@@ -6,7 +6,7 @@
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  background: #1a1a2e;
+  background: #141518;
   color: #eee;
   overflow: hidden;
 }
@@ -58,14 +58,14 @@ body {
 
 .map-std-btn.active {
   background: #e0e0e0;
-  color: #0f3460;
+  color: #2a2d32;
 }
 
 /* Sidebar */
 .sidebar {
   width: 570px;
-  background: #16213e;
-  border-left: 1px solid #0f3460;
+  background: #23262a;
+  border-left: 1px solid #33373d;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -87,19 +87,22 @@ body {
 
 .sidebar-resize-handle:hover,
 .sidebar-resize-handle:active {
-  background: linear-gradient(to right, transparent, #e94560, transparent);
+  background: linear-gradient(to right, transparent, #ff6b1a, transparent);
 }
 
 .sidebar-header {
-  padding: 16px;
-  background: #0f3460;
-  border-bottom: 1px solid #1a1a4e;
+  padding: 20px 24px;
+  background: #2a2d32;
+  border-bottom: 1px solid #33373d;
 }
 
 .sidebar-header h1 {
   font-size: 18px;
-  color: #e94560;
+  color: #ff8c42;
   margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .sidebar-header p {
@@ -109,10 +112,10 @@ body {
 
 /* Stats panel */
 .stats-panel {
-  padding: 12px 16px;
-  border-bottom: 1px solid #0f3460;
+  padding: 16px 24px;
+  border-bottom: 1px solid #33373d;
   display: flex;
-  gap: 16px;
+  gap: 20px;
 }
 
 .stat-item {
@@ -122,7 +125,7 @@ body {
 .stat-value {
   font-size: 24px;
   font-weight: bold;
-  color: #e94560;
+  color: #ff8c42;
 }
 
 .stat-label {
@@ -142,27 +145,35 @@ body {
 .chat-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 12px 16px;
+  padding: 16px 20px;
+  /* Скроллбар скрыт, но прокрутка (колесо/тач) работает */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.chat-messages::-webkit-scrollbar {
+  display: none;
 }
 
 .chat-message {
-  margin-bottom: 12px;
-  padding: 10px 14px;
-  border-radius: 8px;
+  margin-bottom: 14px;
+  padding: 12px 16px;
+  border-radius: 10px;
   font-size: 14px;
   line-height: 1.5;
   max-width: 90%;
 }
 
 .chat-message.user {
-  background: #0f3460;
+  background: rgba(255, 107, 26, 0.14);
+  border: 1px solid rgba(255, 107, 26, 0.3);
   margin-left: auto;
   border-bottom-right-radius: 2px;
 }
 
 .chat-message.assistant {
-  background: #1a1a2e;
-  border: 1px solid #0f3460;
+  background: #1b1d20;
+  border: 1px solid #33373d;
   border-bottom-left-radius: 2px;
 }
 
@@ -192,8 +203,8 @@ body {
 }
 
 .chat-message.assistant th {
-  border: 1px solid #0f3460;
-  background: rgba(15, 52, 96, 0.5);
+  border: 1px solid #3f444b;
+  background: rgba(255, 255, 255, 0.05);
   padding: 6px 10px;
   text-align: left;
   color: #ffd166;
@@ -201,17 +212,17 @@ body {
 }
 
 .chat-message.assistant td {
-  border: 1px solid #0f3460;
+  border: 1px solid #3f444b;
   padding: 6px 10px;
 }
 
 .chat-message.assistant tr:nth-child(even) td {
-  background: rgba(26, 26, 46, 0.4);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .chat-message.assistant pre {
-  background: #1a1a2e;
-  border: 1px solid #0f3460;
+  background: #141518;
+  border: 1px solid #33373d;
   border-radius: 4px;
   padding: 8px;
   margin: 8px 0;
@@ -232,17 +243,18 @@ body {
 }
 
 .chat-input-area {
-  padding: 12px 16px;
-  border-top: 1px solid #0f3460;
+  padding: 16px 20px 18px;
+  border-top: 1px solid #33373d;
   display: flex;
-  gap: 8px;
+  gap: 10px;
   align-items: flex-end;
 }
 
 .chat-input-area textarea {
   flex: 1;
-  background: #1a1a2e;
-  border: 1px solid #0f3460;
+  background: #1b1d20;
+  border: 1px solid rgba(255, 107, 26, 0.55);
+  box-shadow: 0 0 10px rgba(255, 107, 26, 0.25);
   color: #eee;
   padding: 10px 14px;
   border-radius: 12px;
@@ -256,7 +268,8 @@ body {
 
 .chat-input-area textarea:focus {
   outline: none;
-  border-color: #e94560;
+  border-color: #ff6b1a;
+  box-shadow: 0 0 16px rgba(255, 107, 26, 0.5);
 }
 
 /* Send button */
@@ -265,7 +278,7 @@ body {
   height: 44px;
   border: none;
   border-radius: 50%;
-  background: linear-gradient(135deg, #e94560 0%, #c73e54 100%);
+  background: linear-gradient(135deg, #ff9500 0%, #ff4d00 100%);
   color: white;
   cursor: pointer;
   display: flex;
@@ -273,48 +286,58 @@ body {
   justify-content: center;
   transition: all 0.2s ease;
   flex-shrink: 0;
-  box-shadow: 0 2px 8px rgba(233, 69, 96, 0.3);
+  box-shadow: 0 0 14px rgba(255, 107, 26, 0.4);
 }
 
 .btn-send:hover:not(:disabled) {
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(233, 69, 96, 0.5);
-  background: linear-gradient(135deg, #ff5a75 0%, #e94560 100%);
+  box-shadow: 0 4px 18px rgba(255, 107, 26, 0.6);
+  background: linear-gradient(135deg, #ffab33 0%, #ff6b1a 100%);
 }
 
 .btn-send:active:not(:disabled) {
   transform: translateY(0);
-  box-shadow: 0 2px 6px rgba(233, 69, 96, 0.3);
+  box-shadow: 0 2px 8px rgba(255, 107, 26, 0.4);
 }
 
 .btn-send:disabled {
   opacity: 0.4;
   cursor: not-allowed;
-  background: #3a3a4a;
+  background: #3a3f45;
   box-shadow: none;
 }
 
 /* Layer Panel */
 .layer-panel {
-  background: #16213e;
-  border-bottom: 1px solid #0f3460;
+  background: #23262a;
+  border-bottom: 1px solid #33373d;
   max-height: 400px;
   overflow-y: auto;
+  /* Скроллбар скрыт, но прокрутка (колесо/тач) работает */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.layer-panel::-webkit-scrollbar {
+  display: none;
 }
 
 .layer-panel-header {
-  padding: 12px 16px;
+  padding: 14px 20px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-bottom: 1px solid #0f3460;
+  border-bottom: 1px solid #33373d;
 }
 
 .layer-panel-header h3 {
   font-size: 14px;
-  color: #e94560;
+  color: #ff8c42;
   margin: 0;
   font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .layer-panel-header-controls {
@@ -326,28 +349,34 @@ body {
 .layer-count {
   font-size: 11px;
   color: #888;
-  background: #0f3460;
+  background: rgba(255, 255, 255, 0.06);
   padding: 2px 8px;
   border-radius: 10px;
 }
 
-.layer-collapse-btn {
-  background: #0f3460;
+/* Кнопки-шевроны (свернуть/легенда): без фона, серые; при наведении —
+   огненно-оранжевые, шеврон плавно поворачивается справа вниз и обратно */
+.layer-collapse-btn,
+.layer-legend-btn {
+  background: transparent;
   border: none;
-  color: #eee;
+  color: #9aa0a6;
   cursor: pointer;
-  font-size: 12px;
-  padding: 4px 10px;
-  border-radius: 6px;
-  transition: all 0.2s;
+  padding: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: transform 0.25s ease, color 0.2s ease;
 }
 
-.layer-collapse-btn:hover {
-  background: #e94560;
-  transform: scale(1.05);
+.layer-collapse-btn:hover,
+.layer-legend-btn:hover {
+  color: #ff6b1a;
+  transform: rotate(90deg);
+}
+
+.toggle-chevron {
+  display: block;
 }
 
 .layer-panel-collapsed {
@@ -355,18 +384,18 @@ body {
 }
 
 .layer-panel-content {
-  padding: 8px 0;
+  padding: 12px 0 14px;
 }
 
 /* Layer Item */
 .layer-item {
-  padding: 10px 16px;
-  border-bottom: 1px solid rgba(15, 52, 96, 0.3);
+  padding: 12px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   transition: background 0.2s;
 }
 
 .layer-item:hover {
-  background: rgba(15, 52, 96, 0.2);
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .layer-item-disabled {
@@ -386,6 +415,19 @@ body {
   flex: 1;
 }
 
+/* Упрощённые контурные иконки (SVG, OutlineIcons.jsx) с огненно-оранжевым свечением */
+.ui-outline-icon {
+  color: #ff6b1a;
+  filter: drop-shadow(0 0 5px rgba(255, 107, 26, 0.55));
+  flex-shrink: 0;
+}
+
+/* Инлайн-вариант для MapLibre-попапов (внутри <strong>) */
+.ui-outline-icon.inline {
+  display: inline-block;
+  vertical-align: -3px;
+}
+
 .layer-item-icon {
   font-size: 20px;
   width: 32px;
@@ -393,7 +435,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(15, 52, 96, 0.5);
+  background: rgba(255, 255, 255, 0.06);
   border-radius: 8px;
 }
 
@@ -420,27 +462,11 @@ body {
   gap: 8px;
 }
 
-.layer-legend-btn {
-  background: none;
-  border: none;
-  color: #888;
-  cursor: pointer;
-  font-size: 10px;
-  padding: 4px 6px;
-  border-radius: 4px;
-  transition: all 0.2s;
-}
-
-.layer-legend-btn:hover {
-  background: #0f3460;
-  color: #eee;
-}
-
 /* Layer Legend */
 .layer-legend {
   margin-top: 10px;
-  padding: 8px 12px;
-  background: rgba(15, 52, 96, 0.3);
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.04);
   border-radius: 6px;
   display: flex;
   flex-wrap: wrap;
@@ -484,26 +510,27 @@ body {
 /* Подслои валидации — iOS-переключатели, «воздух» между строками */
 .validation-sublayers {
   margin-top: 12px;
-  padding: 10px;
-  background: rgba(15, 52, 96, 0.3);
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.04);
   border-radius: 10px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
+/* Маркер — как точка в .layer-legend (круглая, белая обводка) */
 .validation-sublayer-color {
   width: 12px;
   height: 12px;
-  border-radius: 3px;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+  border: 2px solid #fff;
   flex-shrink: 0;
 }
 
 .validation-sublayer-label {
   flex: 1;
-  font-size: 12px;
-  color: #e0e0e0;
+  font-size: 11px;
+  color: #ccc;
   user-select: none;
 }
 
@@ -522,15 +549,15 @@ body {
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.04);
+  padding: 16.5px 16px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
   cursor: pointer;
   transition: background 0.15s;
 }
 
 .ios-toggle-row:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.07);
 }
 
 /* Слайдер в режиме строки — «пилюля» 44×24 справа, не на всю строку */
@@ -579,7 +606,7 @@ body {
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: #3a3a4a;
+  background-color: #3a3f45;
   transition: 0.3s;
   border-radius: 24px;
 }
@@ -624,8 +651,8 @@ body {
 .spinner {
   width: 16px;
   height: 16px;
-  border: 2px solid #333;
-  border-top-color: #e94560;
+  border: 2px solid #3f444b;
+  border-top-color: #ff6b1a;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -680,7 +707,7 @@ body {
 }
 
 .map-popup strong {
-  color: #e94560;
+  color: #ea580c;
   font-size: 15px;
   display: block;
   margin-bottom: 4px;
@@ -732,7 +759,7 @@ body {
 }
 
 .fire-popup strong {
-  color: #e94560;
+  color: #ea580c;
   font-size: 15px;
   display: block;
   margin-bottom: 4px;
@@ -746,7 +773,7 @@ body {
 }
 
 .custom-popup strong {
-  color: #0f3460;
+  color: #2a2d32;
   font-size: 15px;
   display: block;
   margin-bottom: 4px;
@@ -757,8 +784,8 @@ body {
   position: absolute;
   bottom: 60px;
   left: 10px;
-  background: #16213e;
-  border: 1px solid #0f3460;
+  background: #23262a;
+  border: 1px solid #33373d;
   border-radius: 8px;
   padding: 12px 16px;
   z-index: 1;
@@ -769,7 +796,7 @@ body {
 .legend-title {
   font-size: 13px;
   font-weight: 600;
-  color: #e94560;
+  color: #ff8c42;
   margin-bottom: 8px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -830,9 +857,9 @@ body {
 .results-visualization {
   margin-top: 16px;
   padding: 16px;
-  background: rgba(15, 52, 96, 0.3);
+  background: rgba(255, 255, 255, 0.04);
   border-radius: 8px;
-  border: 1px solid #0f3460;
+  border: 1px solid #33373d;
 }
 
 .charts-container {
@@ -842,17 +869,20 @@ body {
 }
 
 .result-chart {
-  background: rgba(26, 26, 46, 0.5);
+  background: rgba(20, 21, 24, 0.6);
   padding: 12px;
   border-radius: 6px;
-  border: 1px solid #1a1a4e;
+  border: 1px solid #33373d;
 }
 
 .result-chart h4 {
   margin: 0 0 12px 0;
   font-size: 14px;
-  color: #e94560;
+  color: #ff8c42;
   font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .charts-row {
@@ -880,7 +910,7 @@ body {
   justify-content: space-around;
   margin-top: 12px;
   padding-top: 12px;
-  border-top: 1px solid #1a1a4e;
+  border-top: 1px solid #33373d;
   font-size: 13px;
   color: #ccc;
 }
@@ -899,7 +929,7 @@ body {
 .export-buttons {
   margin-top: 16px;
   padding-top: 16px;
-  border-top: 1px solid #1a1a4e;
+  border-top: 1px solid #33373d;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -950,8 +980,8 @@ body {
 }
 
 .recharts-default-tooltip {
-  background: #1a1a2e !important;
-  border: 1px solid #0f3460 !important;
+  background: #23262a !important;
+  border: 1px solid #3f444b !important;
   border-radius: 6px !important;
   padding: 8px 12px !important;
 }

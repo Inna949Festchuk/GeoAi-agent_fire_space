@@ -99,12 +99,12 @@ function ChatPanel({ bbox, onResponse, onLayerAction, onChatStateChange, jobProg
                       </div>
                     ),
                     th: ({node, ...props}) => (
-                      <th style={{border: '1px solid #444', padding: '6px 12px', backgroundColor: '#1a1a2e', textAlign: 'left'}} {...props} />
+                      <th style={{border: '1px solid #3f444b', padding: '6px 12px', backgroundColor: '#1b1d20', textAlign: 'left'}} {...props} />
                     ),
                     td: ({node, ...props}) => (
-                      <td style={{border: '1px solid #444', padding: '6px 12px'}} {...props} />
+                      <td style={{border: '1px solid #3f444b', padding: '6px 12px'}} {...props} />
                     ),
-                    h1: ({node, ...props}) => <h1 style={{fontSize: '18px', fontWeight: 'bold', margin: '12px 0 8px 0', color: '#e94560'}} {...props} />,
+                    h1: ({node, ...props}) => <h1 style={{fontSize: '18px', fontWeight: 'bold', margin: '12px 0 8px 0', color: '#ff8c42'}} {...props} />,
                     h2: ({node, ...props}) => <h2 style={{fontSize: '16px', fontWeight: 'bold', margin: '10px 0 6px 0', color: '#ff8c42'}} {...props} />,
                     h3: ({node, ...props}) => <h3 style={{fontSize: '14px', fontWeight: 'bold', margin: '8px 0 4px 0', color: '#ffd166'}} {...props} />,
                     ul: ({node, ...props}) => <ul style={{margin: '8px 0', paddingLeft: '20px'}} {...props} />,
@@ -112,8 +112,8 @@ function ChatPanel({ bbox, onResponse, onLayerAction, onChatStateChange, jobProg
                     li: ({node, ...props}) => <li style={{margin: '4px 0'}} {...props} />,
                     code: ({node, inline, ...props}) =>
                       inline ?
-                        <code style={{backgroundColor: '#1a1a2e', padding: '2px 6px', borderRadius: '3px', fontSize: '13px'}} {...props} /> :
-                        <code style={{display: 'block', backgroundColor: '#1a1a2e', padding: '8px', borderRadius: '4px', margin: '8px 0', fontSize: '12px', overflowX: 'auto'}} {...props} />,
+                        <code style={{backgroundColor: '#141518', padding: '2px 6px', borderRadius: '3px', fontSize: '13px'}} {...props} /> :
+                        <code style={{display: 'block', backgroundColor: '#141518', padding: '8px', borderRadius: '4px', margin: '8px 0', fontSize: '12px', overflowX: 'auto'}} {...props} />,
                     strong: ({node, ...props}) => <strong style={{fontWeight: 'bold', color: '#fff'}} {...props} />,
                     em: ({node, ...props}) => <em style={{fontStyle: 'italic'}} {...props} />,
                   }}

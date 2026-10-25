@@ -1,14 +1,14 @@
 metric,value,target,status
-precision,0.1398,>=0.8,not met
-recall,0.6252,>=0.75,not met
-f1,0.2285,>=0.77,not met
-tp,959,,
-fp,5901,,
-fn,575,,
-burn_iou,0.1235,>0.6,not met
-burn_f1,0.2199,>0.5,not met
-burn_area_correlation,0.8786,>0.8,met
-burn_mean_area_deviation_pct,78.3,<20.0,not met
-burn_strela_area_ha,321757.5,,
-burn_modis_area_ha,918200.0,,
-burn_temporal_lag_days,-18.51,,
+precision,0.0588,>=0.8,not met
+recall,0.6364,>=0.75,not met
+f1,0.1077,>=0.77,not met
+tp,7,,
+fp,112,,
+fn,4,,
+burn_iou,0.3264,>0.6,not met
+burn_f1,0.4921,>0.5,not met
+burn_area_correlation,0.8674,>0.8,met
+burn_mean_area_deviation_pct,63.0,<20.0,not met
+burn_strela_area_ha,158642.5,,
+burn_modis_area_ha,401700.0,,
+burn_temporal_lag_days,-23.69,,

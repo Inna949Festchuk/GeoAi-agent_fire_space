@@ -1,5 +1,6 @@
 import { useEffect, useRef, useMemo, useState } from 'react'
 import maplibregl from 'maplibre-gl'
+import { outlineIconSvg } from './OutlineIcons'
 
 // Определения базовых карт: обычная (OSM) и спутниковая (ESRI World Imagery,
 // такие же растровые тайлы, как в репозитории flight-planning)
@@ -615,7 +616,7 @@ function MapView({
     // Попап для маршрутов
     map.on('click', 'routes-line-layer', (e) => {
       const props = e.features[0].properties
-      let content = '<strong>🛣️ Маршрут</strong>'
+      let content = `<strong>${outlineIconSvg('route')} Маршрут</strong>`
       if (props.distance_km) content += `<div class="popup-row"><span class="popup-label">Расстояние:</span> <span class="popup-value">${props.distance_km} км</span></div>`
       if (props.duration_min) content += `<div class="popup-row"><span class="popup-label">Время:</span> <span class="popup-value">${props.duration_min} мин</span></div>`
       new maplibregl.Popup({ className: 'map-popup-container', closeButton: false })
@@ -652,7 +653,7 @@ function MapView({
     map.on('click', 'fire-stations-layer', (e) => {
       const props = e.features[0].properties
       const coords = e.features[0].geometry.coordinates
-      let content = `<strong>🚒 ${props.name || 'Пожарная часть'}</strong>`
+      let content = `<strong>${outlineIconSvg('station')} ${props.name || 'Пожарная часть'}</strong>`
       if (props.address) content += `<div class="popup-row"><span class="popup-label">Адрес:</span> <span class="popup-value">${props.address}</span></div>`
       if (props.phone) content += `<div class="popup-row"><span class="popup-label">Телефон:</span> <span class="popup-value">${props.phone}</span></div>`
       if (props.distance_km) content += `<div class="popup-row"><span class="popup-label">Расстояние:</span> <span class="popup-value">${props.distance_km} км</span></div>`
