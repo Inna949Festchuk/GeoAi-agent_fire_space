@@ -10,6 +10,10 @@
 
 ![Обновленный ИИ-интерфейс валидации](Validate.png)
 
+![DarkMater](/DarkMatter.png)
+
+![DarkMater3D](/DarkMatter3D.png)
+
 ## Быстрый старт
 
 ### 1. Настрой окружение

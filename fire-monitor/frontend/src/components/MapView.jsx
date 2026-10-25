@@ -38,6 +38,11 @@ const BASEMAPS = {
         DEM_HILLSHADE_LAYER,
         ...merged.layers.slice(idx),
       ]
+      // 3D-здания ПОСЛЕ 'building-top': плоская «крыша» CARTO с непрозрачной
+      // заливкой должна оставаться под экструзией, а не закрывать её
+      let bIdx = merged.layers.findIndex((l) => l.id === 'building-top')
+      if (bIdx === -1) bIdx = merged.layers.findIndex((l) => l.id === 'building')
+      merged.layers.splice(bIdx === -1 ? merged.layers.length : bIdx + 1, 0, BUILDINGS_3D_LAYER)
       return merged
     },
   },
@@ -74,7 +79,9 @@ const createBasemapSwitcherControl = (basemaps, defaultId, onSelect) => {
   }
 
   const select = (id) => {
-    if (id === currentId) return
+    // Без early-return на «уже активную»: повторный клик по кнопке после
+    // несработавшего переключения — это повторная попытка (на React-стороне
+    // дедупликация по фактическому применённому состоянию)
     currentId = id
     console.log('[basemap] switch to:', id, basemaps[id]?.label)
     refreshActive()
@@ -140,6 +147,39 @@ const DEM_HILLSHADE_LAYER = {
     'hillshade-shadow-color': 'rgba(0, 0, 0, 0.4)',
     'hillshade-highlight-color': 'rgba(255, 255, 255, 0.3)',
     'hillshade-exaggeration': 0.7,
+  },
+}
+
+// 3D-здания для базы Dark Matter: fill-extrusion из того же source-layer
+// 'buildings' (в MVT с z13). Высота — из свойств здания: OSM-этажность
+// (building:levels × ~3 м), OSM-высота в метрах или «срезы» CARTO
+// (свойство layer: дом нарезан на этажи → (layer+1)×3 м, верхний срез
+// и определяет видимую высоту); фолбэк 3 м. Видим только при включённом
+// 2.5D-рельефе (visibility синхронизируется с map.getTerrain() — эффект
+// в MapView ниже).
+const BUILDINGS_3D_LAYER = {
+  id: 'buildings-3d',
+  type: 'fill-extrusion',
+  source: 'protomaps',
+  'source-layer': 'buildings',
+  minzoom: 13,
+  filter: [">=", ["coalesce", ["get", "layer"], 0], 0],
+  layout: { visibility: 'none' },
+  paint: {
+    // Один цвет на стены и крышу: maplibre-gl 4.7.1 НЕ знает
+    // fill-extrusion-top-color (появился в новых версиях) — «чужеродное»
+    // свойство заставляло MapLibre отклонять ВЕСЬ стиль, и база не включалась
+    'fill-extrusion-color': '#3a4046',
+    'fill-extrusion-height': [
+      'case',
+      ['has', 'building:levels'], ['*', ['coalesce', ['get', 'building:levels'], 1], 3],
+      ['has', 'building:height'], ['get', 'building:height'],
+      ['has', 'height'], ['get', 'height'],
+      // default: CARTO-«срезы» (layer) → (layer+1)×3 м; свойства нет → 3 м.
+      // ВАЖНО: 'case' требует НЕЧЁТНОЕ число аргументов (N пар + default)
+      ['*', ['+', ['coalesce', ['get', 'layer'], 0], 1], 3],
+    ],
+    'fill-extrusion-opacity': 0.95,
   },
 }
 
@@ -252,6 +292,10 @@ function MapView({
   const burnFittedForRef = useRef(null)
   // Выбранная базовая карта; эффект ниже применяет её через map.setStyle
   const [basemapId, setBasemapId] = useState('esri')
+  // Счётчик кликов: перепрогон эффекта при повторном клике на ту же кнопку
+  // (setBasemapId тем же значением эффект не перезапускает, а клик после
+  // несработавшего переключения должен стать повторной попыткой)
+  const [switchSeq, setSwitchSeq] = useState(0)
   // Счётчик применённых базовых стилей: setStyle стирает тематические слои,
   // эффекты-перерисовщики зависят от него и добавляют слои заново
   const [styleEpoch, setStyleEpoch] = useState(0)
@@ -304,8 +348,12 @@ function MapView({
     map.addControl(new maplibregl.NavigationControl(), 'top-left')
     // Штатного селектора базовых карт в MapLibre GL нет — свой контрол
     // в стандартном виде (белый блок под навигацией, слева сверху).
-    // Выбор сообщает setBasemapId — стиль применяет эффект ниже.
-    map.addControl(createBasemapSwitcherControl(BASEMAPS, 'esri', setBasemapId), 'top-left')
+    // Выбор сообщает обработчик — стиль применяет эффект ниже
+    // (switchSeq++ — повторный клик после сбоя = повторная попытка).
+    map.addControl(createBasemapSwitcherControl(BASEMAPS, 'esri', (id) => {
+      setBasemapId(id)
+      setSwitchSeq((n) => n + 1)
+    }), 'top-left')
     // 2.5D-рельеф (SRTM terrarium + setTerrain) — кнопка под переключателем карт
     map.addControl(createTerrainToggleControl(TERRAIN), 'top-left')
     map.addControl(new maplibregl.ScaleControl(), 'bottom-left')
@@ -334,11 +382,14 @@ function MapView({
     }
   }, [])
 
-  // Применение выбранной базовой карты (map.setStyle). Пропускаем прогоны,
-  // где на карте уже эта база (стартовый 'esri', повторные прогоны,
-  // напр. StrictMode). setStyle стирает тематические слои: ждём готовности
-  // нового стиля (появление 'dem-hillshade') и бём styleEpoch — эффекты
-  // слоёв перерисуют данные поверх новой базы.
+  // Применение выбранной базовой карты (map.setStyle). Пропускаем прогон,
+  // когда эта база уже реально применена (включая повторные клики и
+  // StrictMode). Если применение не удалось (напр. MapLibre отклонил стиль),
+  // appliedBasemapRef остаётся старым — повторный клик по кнопке
+  // (switchSeq++) станет повторной попыткой.
+  // setStyle стирает тематические слои: ждём готовности нового стиля
+  // (целевой маркер-слой) и бём styleEpoch — эффекты слоёв перерисуют
+  // данные поверх новой базы.
   useEffect(() => {
     if (basemapId === appliedBasemapRef.current) return
     const map = mapRef.current
@@ -347,40 +398,78 @@ function MapView({
 
     let cancelled = false
     let fallbackTimer = null
-    const onStyleData = () => {
-      if (cancelled || !map.getLayer('dem-hillshade')) return
+    // Целевой маркер: слой, существующий только в целевой базе.
+    // 'dem-hillshade' НЕ подходит — он есть в обеих базах, и после
+    // отклонения стиля он ложно подтвердил бы «переключение».
+    const markerReady = () => (basemapId === 'carto'
+      ? !!map.getLayer('buildings-3d')
+      : !!map.getLayer('basemap'))
+    const finish = () => {
+      if (cancelled) return
       cancelled = true
       map.off('styledata', onStyleData)
       clearTimeout(fallbackTimer)
       appliedBasemapRef.current = basemapId
       setStyleEpoch((e) => e + 1)
+      console.log('[basemap] applied:', basemapId, bm.label)
+    }
+    const onStyleData = () => {
+      if (markerReady()) finish()
     }
     const run = async () => {
+      let style
       try {
-        const style = await bm.buildStyle()
-        if (cancelled) return
-        map.on('styledata', onStyleData)
-        map.setStyle(style)
-        // Страховка, если styledata с dem-hillshade так и не пришёл
-        fallbackTimer = setTimeout(() => {
-          if (!cancelled) {
-            cancelled = true
-            map.off('styledata', onStyleData)
-            appliedBasemapRef.current = basemapId
-            setStyleEpoch((e) => e + 1)
-          }
-        }, 8000)
+        style = await bm.buildStyle()
       } catch (err) {
-        console.error(`[basemap] не удалось применить «${bm.label}»:`, err, '— остаёмся на текущей базе (повторный клик по кнопке повторит попытку)')
+        console.error(`[basemap] «${bm.label}»: не удалось загрузить стиль:`, err, '— повторный клик по кнопке повторит попытку')
+        return
       }
+      try {
+        // Невалидный стиль (неизвестные свойства слоёв и т.п.) бросает
+        // синхронно — карта остаётся со старым стилем
+        map.setStyle(style)
+      } catch (err) {
+        console.error(`[basemap] «${bm.label}»: MapLibre отклонил стиль —`, err, 'остаёмся на текущей базе; повторный клик по кнопке повторит попытку')
+        return
+      }
+      if (cancelled) return
+      map.on('styledata', onStyleData)
+      // Страховка: считаем применённым только если целевой стиль реально на карте
+      fallbackTimer = setTimeout(() => {
+        if (!cancelled && markerReady()) finish()
+      }, 8000)
     }
     run()
     return () => {
       cancelled = true
       clearTimeout(fallbackTimer)
-      if (mapRef.current) mapRef.current.off('styledata', onStyleData)
+      map.off('styledata', onStyleData)
     }
-  }, [basemapId])
+  }, [basemapId, switchSeq])
+
+  // 3D-здания (база Dark Matter): видны только при включённом 2.5D-рельефе
+  // (map.getTerrain()). Синхронизируется по 'terrain' (каждый setTerrain)
+  // и 'styledata' (после каждой смены стиля); guard — без лишних
+  // setLayoutProperty.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    let last = null
+    const sync = () => {
+      if (!map.getLayer('buildings-3d')) return
+      const want = map.getTerrain() ? 'visible' : 'none'
+      if (want === last) return
+      last = want
+      map.setLayoutProperty('buildings-3d', 'visibility', want)
+    }
+    map.on('terrain', sync)
+    map.on('styledata', sync)
+    sync()
+    return () => {
+      map.off('terrain', sync)
+      map.off('styledata', sync)
+    }
+  }, [basemapId, styleEpoch])
 
   // Вспомогательные функции для попапов пользовательских точек/подписей
   const escapeHtml = (s) => String(s)
