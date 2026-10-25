@@ -2,39 +2,49 @@ import { useEffect, useRef, useMemo, useState } from 'react'
 import maplibregl from 'maplibre-gl'
 import { outlineIconSvg } from './OutlineIcons'
 
-// Определения базовых карт: обычная (OSM) и спутниковая (ESRI World Imagery,
-// такие же растровые тайлы, как в репозитории flight-planning)
+// Определения базовых карт. Каждая база даёт ПОЛНЫЙ стиль через buildStyle() —
+// переключение выполняется map.setStyle (не заменой источника). Любой стиль
+// ОБЯЗАН содержать 'dem' + 'dem-hillshade', иначе ломается 2.5D-рельеф.
+// Растерный источник ESRI (спутниковая карта, те же тайлы, что и в flight-planning)
+const ESRI_SOURCE = {
+  type: 'raster',
+  tiles: [
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  ],
+  tileSize: 256,
+  maxzoom: 19,
+  attribution: 'Esri, Maxar, Earthstar Geographics',
+}
+
 const BASEMAPS = {
-  // «Обычная карта» — CartoDB Voyager (светлый стиль CARTO, 4 сабдомена).
-  // Вместо основного OSM-тайл-сервера: быстрее и стабильнее из нашей сети.
+  // «Тёмная карта» — CARTO Dark Matter: ВЕКТОРНЫЙ стиль (MVT).
+  // Легаси-растер CARTO (rastertiles/voyager, dark_all) теперь отдаёт заглушку
+  // «API KEY REQUIRED» (проверено 2026-10-25: HTTP 200, но 2049-байтовый
+  // placeholder-PNG) — поэтому старый вариант «Обычная карта (CartoDB)»
+  // отображался пустым. Векторный CDN tiles.basemaps.cartocdn.com публичный,
+  // ТОКЕН НЕ НУЖЕН (проверено: style.json 200 + MVT-тайл 200).
   carto: {
-    label: 'Обычная карта (CartoDB)',
+    label: 'Тёмная карта (CartoDB Dark Matter)',
     icon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/><path d="M9 4v14"/><path d="M15 6v14"/></svg>',
-    source: {
-      type: 'raster',
-      tiles: [
-        'https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
-        'https://b.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
-        'https://c.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
-        'https://d.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
-      ],
-      tileSize: 256,
-      maxzoom: 19,
-      attribution: '© OpenStreetMap contributors © CARTO',
+    buildStyle: async () => {
+      const remote = await fetchDarkMatterStyle()
+      // Мерджим свой рельеф: 'dem' + hillshade сразу после 'background'
+      // (под всей картографией; тематические слои добавятся сверху)
+      const merged = { ...remote, sources: { ...remote.sources, dem: DEM_SOURCE } }
+      const firstNonBg = merged.layers.findIndex((l) => l.type !== 'background')
+      const idx = firstNonBg === -1 ? 0 : firstNonBg
+      merged.layers = [
+        ...merged.layers.slice(0, idx),
+        DEM_HILLSHADE_LAYER,
+        ...merged.layers.slice(idx),
+      ]
+      return merged
     },
   },
   esri: {
     label: 'Спутниковая карта (ESRI World Imagery)',
     icon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3.6 9h16.8"/><path d="M3.6 15h16.8"/><path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18z"/></svg>',
-    source: {
-      type: 'raster',
-      tiles: [
-        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-      ],
-      tileSize: 256,
-      maxzoom: 19,
-      attribution: 'Esri, Maxar, Earthstar Geographics',
-    },
+    buildStyle: () => makeBaseStyle(),
   },
 }
 
@@ -43,66 +53,15 @@ const BASEMAPS = {
 // базовых карт в MapLibre GL нет, а runtime-класса Control — тоже
 // (в отличие от Mapbox: в maplibre-gl 4.x `maplibregl.Control ===
 // undefined`), поэтому — стандартный подход: обычный объект,
-// реализующий интерфейс IControl (onAdd/onRemove). Контрол живёт в
-// штатном контейнере контролей карты и сам меняет источник растрового
-// слоя «basemap» — тематические слои (пожары, гари, маршруты) при этом
-// не затрагиваются.
-const createBasemapSwitcherControl = (basemaps, defaultId) => {
+// реализующий интерфейс IControl (onAdd/onRemove).
+// Контрол рисует кнопки и сообщает выбранный id (onSelect); сам стиль
+// применяет React-эффект map.setStyle (см. эффект по basemapId в MapView):
+// каждый базовый стиль — полный (векторный CARTO Dark Matter или растер
+// ESRI + рельеф), а setStyle стирает тематические слои, которые эффект
+// перерисовывает через styleEpoch.
+const createBasemapSwitcherControl = (basemaps, defaultId, onSelect) => {
   let currentId = defaultId
   let container = null
-  let map = null
-  let watchHandler = null
-
-  const applyNow = () => {
-    if (!map) return
-    const bm = basemaps[currentId]
-    try {
-      // В MapLibre GL нет map.setSource(), а setTileSize/setMaxzoom/
-      // setAttribution отсутствуют в этой сборке — используем каноническую
-      // последовательность removeLayer → removeSource → addSource → addLayer.
-      const style = map.getStyle()
-      const firstAbove = (style.layers || []).find(l => l.id !== 'basemap')?.id
-      if (map.getLayer('basemap')) map.removeLayer('basemap')
-      if (map.getSource('basemap')) map.removeSource('basemap')
-      map.addSource('basemap', bm.source)
-      // firstAbove — вернуть базовую карту в низ стека, под тематические слои
-      map.addLayer(
-        { id: 'basemap', type: 'raster', source: 'basemap', minzoom: 0, maxzoom: 19 },
-        firstAbove,
-      )
-      console.log('[basemap] applied:', currentId, bm?.label)
-    } catch (err) {
-      console.error('[basemap] apply failed:', err)
-    }
-  }
-
-  // Если стиль карты ещё не загрузился (слоя basemap нет) — ждём его
-  // появления по styledata и применяем источник. Слушатель одноразовый
-  // и отключает сам себя: на каждый кадр поллить не нужно.
-  const watchUntilLayer = () => {
-    if (!map) return
-    if (map.getLayer('basemap')) {
-      applyNow()
-      return
-    }
-    if (!watchHandler) {
-      watchHandler = () => {
-        if (map.getLayer('basemap')) {
-          map.off('styledata', watchHandler)
-          watchHandler = null
-          applyNow()
-        }
-      }
-      map.on('styledata', watchHandler)
-    }
-  }
-
-  const stopWatch = () => {
-    if (map && watchHandler) {
-      map.off('styledata', watchHandler)
-      watchHandler = null
-    }
-  }
 
   const refreshActive = () => {
     if (!container) return
@@ -115,16 +74,15 @@ const createBasemapSwitcherControl = (basemaps, defaultId) => {
   }
 
   const select = (id) => {
-    if (!map || id === currentId) return
+    if (id === currentId) return
     currentId = id
     console.log('[basemap] switch to:', id, basemaps[id]?.label)
     refreshActive()
-    watchUntilLayer()
+    onSelect?.(id)
   }
 
   return {
     onAdd(m) {
-      map = m
       container = document.createElement('div')
       container.className = 'maplibregl-ctrl maplibregl-ctrl-group basemap-switcher'
 
@@ -139,15 +97,10 @@ const createBasemapSwitcherControl = (basemaps, defaultId) => {
       }
 
       refreshActive()
-      // Дожидаемся загрузки стиля, чтобы гарантированно применить
-      // выбранную базовую карту (обычно это дефолтная ESRI).
-      watchUntilLayer()
       return container
     },
     onRemove() {
-      stopWatch()
       if (container) container.remove()
-      map = null
       container = null
     },
   }
@@ -166,42 +119,87 @@ const TERRAIN = {
 
 const TERRAIN_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><path d="M3 20 L9.5 8 L13.5 14.5 L16 10.5 L21 20 Z"/><path d="M9.5 8 L11 10.5 L9.5 12 L8 10.5 Z" fill="currentColor" stroke="none"/></svg>'
 
+// DEM (рельеф) — источник и слой hillshade, ОБЩИЕ для всех базовых стилей:
+// после map.setStyle любой новый стиль обязан содержать 'dem', иначе
+// 2.5D-рельеф ломается (DEM_SOURCE вшита и в makeBaseStyle, и в merge
+// CARTO Dark Matter).
+const DEM_SOURCE = {
+  type: 'raster-dem',
+  tiles: TERRAIN.tiles,
+  encoding: TERRAIN.encoding,
+  tileSize: TERRAIN.tileSize,
+  maxzoom: TERRAIN.maxzoom,
+  attribution: 'Elevation: SRTM v3 (AWS Open Data)',
+}
+
+const DEM_HILLSHADE_LAYER = {
+  id: 'dem-hillshade',
+  type: 'hillshade',
+  source: 'dem',
+  paint: {
+    'hillshade-shadow-color': 'rgba(0, 0, 0, 0.4)',
+    'hillshade-highlight-color': 'rgba(255, 255, 255, 0.3)',
+    'hillshade-exaggeration': 0.7,
+  },
+}
+
+// Базовый (стартовый) стиль карты: ESRI-спутник + рельеф
+const makeBaseStyle = () => ({
+  version: 8,
+  sources: {
+    basemap: ESRI_SOURCE,
+    dem: DEM_SOURCE,
+  },
+  layers: [
+    {
+      id: 'basemap',
+      type: 'raster',
+      source: 'basemap',
+      minzoom: 0,
+      maxzoom: 19,
+    },
+    // Тени рельефа поверх базовой карты (работает и на ESRI, и на CARTO);
+    // стоит ниже тематических слоёв — те добавляются поверх.
+    DEM_HILLSHADE_LAYER,
+  ],
+})
+
+// CARTO Dark Matter — публичный векторный стиль, ТОКЕН НЕ ТРЕБУЕТСЯ
+// (легаси-растер CARTO требует ключ — см. комментарий у BASEMAPS.carto)
+const CARTO_DARK_STYLE_URL = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
+let darkMatterCache = null
+const fetchDarkMatterStyle = async () => {
+  if (darkMatterCache) return darkMatterCache
+  const r = await fetch(CARTO_DARK_STYLE_URL)
+  if (!r.ok) throw new Error(`CARTO Dark Matter style: HTTP ${r.status}`)
+  darkMatterCache = await r.json()
+  return darkMatterCache
+}
+
 // Тоггл 2.5D-рельефа — штатный вид MapLibre-контрола (один белый блок
 // с иконкой под переключателем базовых карт). Вкл/выкл переключает
 // map.setTerrain(): с наклонением (pitch/rotation) карта становится объёмной.
+// Слушатель styledata персистентный: после каждого map.setStyle (смена
+// базовой карты) рельеф самовосстанавливается согласно текущему
+// состоянию тумблера (setStyle может сбрасывать terrain).
 const createTerrainToggleControl = (terrain) => {
   let on = true
   let container = null
   let map = null
-  let styleHandler = null
 
-  const apply = () => {
-    if (!map || !map.getSource(terrain.sourceId)) return
+  const syncTerrain = () => {
+    if (!map || !map.getLayer('dem-hillshade')) return
     try {
-      if (on) {
+      const has = !!map.getTerrain()
+      if (on && !has) {
         map.setTerrain({ source: terrain.sourceId, exaggeration: terrain.exaggeration })
-        console.log('[terrain] on, exaggeration', terrain.exaggeration)
-      } else {
+        console.log('[terrain] (re)applied, exaggeration', terrain.exaggeration)
+      } else if (!on && has) {
         map.setTerrain(null)
         console.log('[terrain] off')
       }
     } catch (err) {
-      console.error('[terrain] setTerrain failed:', err)
-    }
-  }
-
-  const waitStyle = () => {
-    if (map.getLayer('dem-hillshade')) {
-      apply()
-    } else if (!styleHandler) {
-      styleHandler = () => {
-        if (map.getLayer('dem-hillshade')) {
-          map.off('styledata', styleHandler)
-          styleHandler = null
-          apply()
-        }
-      }
-      map.on('styledata', styleHandler)
+      console.error('[terrain] sync failed:', err)
     }
   }
 
@@ -219,19 +217,20 @@ const createTerrainToggleControl = (terrain) => {
         on = !on
         btn.classList.toggle('active', on)
         btn.title = on ? 'Рельеф 2.5D: вкл (SRTM)' : 'Рельеф 2.5D: выкл'
-        if (map.getLayer('dem-hillshade')) apply()
+        syncTerrain()
       })
       btn.classList.toggle('active', on)
       container.appendChild(btn)
-      waitStyle()
+      // Первое применение + авто-восстановление после каждой смены стиля
+      map.on('styledata', syncTerrain)
+      syncTerrain()
       return container
     },
     onRemove() {
-      if (map && styleHandler) map.off('styledata', styleHandler)
+      if (map) map.off('styledata', syncTerrain)
       if (container) container.remove()
       map = null
       container = null
-      styleHandler = null
     },
   }
 }
@@ -248,6 +247,17 @@ function MapView({
   // Дatasets, на которые уже выполнена подгонка вида (fitBounds) — чтобы
   // повторное переключение слоя не «двигало» карту
   const validationFittedRef = useRef(null)
+  // Последний набор гарей, под который выполнен fitBounds — чтобы
+  // перерисовка после смены базовой карты (styleEpoch) не «прыгала» картой
+  const burnFittedForRef = useRef(null)
+  // Выбранная базовая карта; эффект ниже применяет её через map.setStyle
+  const [basemapId, setBasemapId] = useState('esri')
+  // Счётчик применённых базовых стилей: setStyle стирает тематические слои,
+  // эффекты-перерисовщики зависят от него и добавляют слои заново
+  const [styleEpoch, setStyleEpoch] = useState(0)
+  // Базовая карта, реально применённая на карте (пропуск первичного и
+  // повторного прогонов эффекта, напр. в StrictMode)
+  const appliedBasemapRef = useRef('esri')
   // Event handlers слоя валидации — для корректного map.off при повторном
   // рендере (иначе попапы дублируются при каждом новом прогоне)
   const validationHandlersRef = useRef(null)
@@ -286,41 +296,7 @@ function MapView({
 
     const map = new maplibregl.Map({
       container: mapContainerRef.current,
-      style: {
-        version: 8,
-        sources: {
-          'basemap': BASEMAPS.esri.source,
-          'dem': {
-            type: 'raster-dem',
-            tiles: TERRAIN.tiles,
-            encoding: TERRAIN.encoding,
-            tileSize: TERRAIN.tileSize,
-            maxzoom: TERRAIN.maxzoom,
-            attribution: 'Elevation: SRTM v3 (AWS Open Data)',
-          },
-        },
-        layers: [
-          {
-            id: 'basemap',
-            type: 'raster',
-            source: 'basemap',
-            minzoom: 0,
-            maxzoom: 19,
-          },
-          // Тени рельефа поверх базовой карты (работает и на OSM, и на ESRI);
-          // стоит ниже тематических слоёв — те добавляются поверх.
-          {
-            id: 'dem-hillshade',
-            type: 'hillshade',
-            source: 'dem',
-            paint: {
-              'hillshade-shadow-color': 'rgba(0, 0, 0, 0.4)',
-              'hillshade-highlight-color': 'rgba(255, 255, 255, 0.3)',
-              'hillshade-exaggeration': 0.7,
-            },
-          },
-        ],
-      },
+      style: makeBaseStyle(),
       center: [95, 62], // Center on Siberia
       zoom: 4,
     })
@@ -328,7 +304,8 @@ function MapView({
     map.addControl(new maplibregl.NavigationControl(), 'top-left')
     // Штатного селектора базовых карт в MapLibre GL нет — свой контрол
     // в стандартном виде (белый блок под навигацией, слева сверху).
-    map.addControl(createBasemapSwitcherControl(BASEMAPS, 'esri'), 'top-left')
+    // Выбор сообщает setBasemapId — стиль применяет эффект ниже.
+    map.addControl(createBasemapSwitcherControl(BASEMAPS, 'esri', setBasemapId), 'top-left')
     // 2.5D-рельеф (SRTM terrarium + setTerrain) — кнопка под переключателем карт
     map.addControl(createTerrainToggleControl(TERRAIN), 'top-left')
     map.addControl(new maplibregl.ScaleControl(), 'bottom-left')
@@ -356,6 +333,54 @@ function MapView({
       mapRef.current = null
     }
   }, [])
+
+  // Применение выбранной базовой карты (map.setStyle). Пропускаем прогоны,
+  // где на карте уже эта база (стартовый 'esri', повторные прогоны,
+  // напр. StrictMode). setStyle стирает тематические слои: ждём готовности
+  // нового стиля (появление 'dem-hillshade') и бём styleEpoch — эффекты
+  // слоёв перерисуют данные поверх новой базы.
+  useEffect(() => {
+    if (basemapId === appliedBasemapRef.current) return
+    const map = mapRef.current
+    const bm = BASEMAPS[basemapId]
+    if (!map || !bm) return
+
+    let cancelled = false
+    let fallbackTimer = null
+    const onStyleData = () => {
+      if (cancelled || !map.getLayer('dem-hillshade')) return
+      cancelled = true
+      map.off('styledata', onStyleData)
+      clearTimeout(fallbackTimer)
+      appliedBasemapRef.current = basemapId
+      setStyleEpoch((e) => e + 1)
+    }
+    const run = async () => {
+      try {
+        const style = await bm.buildStyle()
+        if (cancelled) return
+        map.on('styledata', onStyleData)
+        map.setStyle(style)
+        // Страховка, если styledata с dem-hillshade так и не пришёл
+        fallbackTimer = setTimeout(() => {
+          if (!cancelled) {
+            cancelled = true
+            map.off('styledata', onStyleData)
+            appliedBasemapRef.current = basemapId
+            setStyleEpoch((e) => e + 1)
+          }
+        }, 8000)
+      } catch (err) {
+        console.error(`[basemap] не удалось применить «${bm.label}»:`, err, '— остаёмся на текущей базе (повторный клик по кнопке повторит попытку)')
+      }
+    }
+    run()
+    return () => {
+      cancelled = true
+      clearTimeout(fallbackTimer)
+      if (mapRef.current) mapRef.current.off('styledata', onStyleData)
+    }
+  }, [basemapId])
 
   // Вспомогательные функции для попапов пользовательских точек/подписей
   const escapeHtml = (s) => String(s)
@@ -452,7 +477,7 @@ function MapView({
         map.getCanvas().style.cursor = ''
       })
     }
-  }, [fireData, showFires])
+  }, [fireData, showFires, styleEpoch])
 
   // Update burn layer
   useEffect(() => {
@@ -501,9 +526,11 @@ function MapView({
         },
       })
 
-      // Auto-center on first burn polygon
+      // Auto-center on first burn polygon — только когда сам набор данных
+      // изменился (при перерисовке после смены базы карта не «прыгает»)
       const firstFeature = burnData.features[0]
-      if (firstFeature && firstFeature.geometry) {
+      if (firstFeature && firstFeature.geometry && burnFittedForRef.current !== burnData) {
+        burnFittedForRef.current = burnData
         // Calculate bounds from first feature
         const coords = firstFeature.geometry.coordinates
         let bounds = new maplibregl.LngLatBounds()
@@ -563,7 +590,7 @@ function MapView({
         map.getCanvas().style.cursor = ''
       })
     }
-  }, [burnData, showBurns])
+  }, [burnData, showBurns, styleEpoch])
 
   // Update routes layer
   useEffect(() => {
@@ -624,7 +651,7 @@ function MapView({
         .setHTML(`<div class="map-popup">${content}</div>`)
         .addTo(map)
     })
-  }, [routesData, showRoutes])
+  }, [routesData, showRoutes, styleEpoch])
 
   // Update fire stations layer
   useEffect(() => {
@@ -665,7 +692,7 @@ function MapView({
 
     map.on('mouseenter', 'fire-stations-layer', () => { map.getCanvas().style.cursor = 'pointer' })
     map.on('mouseleave', 'fire-stations-layer', () => { map.getCanvas().style.cursor = '' })
-  }, [fireStationsData, showFireStations])
+  }, [fireStationsData, showFireStations, styleEpoch])
 
   // Update other custom layer (sandbox results)
   useEffect(() => {
@@ -768,7 +795,7 @@ function MapView({
         labelMarkersRef.current.push(marker)
       })
     }
-  }, [otherCustomData, showCustom])
+  }, [otherCustomData, showCustom, styleEpoch])
 
   // Слой «Валидация» — результат run_validation из чата:
   // синий — Рослесхоз (GT), красный — детекции Стрела, оранжевый — гари
@@ -935,7 +962,7 @@ function MapView({
       map.on('mouseenter', id, valOnEnter)
       map.on('mouseleave', id, valOnLeave)
     })
-  }, [validationData, showValidation, showValGt, showValStrela, showValBurn, showValModis, showValZone])
+  }, [validationData, showValidation, showValGt, showValStrela, showValBurn, showValModis, showValZone, styleEpoch])
 
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
